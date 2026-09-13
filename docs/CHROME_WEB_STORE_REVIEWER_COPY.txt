@@ -1,0 +1,18 @@
+Product: Evolvio — AI Meeting Coach
+Version: 1.0.117
+
+Single purpose
+Evolvio provides private, real-time communication coaching and post-meeting feedback to the signed-in user during supported browser-based meetings.
+
+How to test
+1. Install the extension in Chrome.
+2. Open Google Meet, Zoom Web, or Microsoft Teams Web.
+3. Open Evolvio, sign in with the reviewer test account supplied in the Chrome Web Store dashboard, select a capture mode, and click Start Coaching.
+4. Evolvio shows private coaching prompts in the reviewer's own meeting tab.
+5. Click Stop Coaching to pause or End Meeting to create a post-meeting report.
+
+Permission explanation
+Evolvio needs microphone capture to transcribe audio and create real-time coaching prompts after the user starts coaching. Meeting-tab audio is used only when the user explicitly selects Full meeting mode. The extension uses the meeting-site permissions only to detect supported meeting pages and display its private overlay. Google identity is used only for sign-in with openid, email, and profile.
+
+Privacy summary
+Evolvio does not sell user data, use it for advertising, or use it to train AI models. Audio capture starts only after the user starts coaching. The user may choose microphone-only coaching, or explicitly select full-meeting mode for broader meeting context. See the public privacy policy URL entered in the dashboard.
