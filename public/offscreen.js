@@ -7,9 +7,48 @@
   var tabRecorder = null;
   var tabInterval = null;
   var tabAudioCtx = null;
+  var tabCaptureStream = null;
   var tabSessionId = null;
+  var micStartToken = 0;
+  var tabStartToken = 0;
   var expectedRecorderStops = /* @__PURE__ */ new WeakSet();
   var flushResolvers = /* @__PURE__ */ new Map();
+  var TRANSCRIPTION_REQUEST_TIMEOUT_MS = 3e4;
+  var TRANSCRIPTION_UPLOAD_ATTEMPTS = 4;
+  function sleep(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+  async function transcribeChunkWithRetry(apiBase, sessionToken, blob, streamType, meetingSessionId) {
+    let lastError = "unknown-transcription-error";
+    for (let attempt = 1; attempt <= TRANSCRIPTION_UPLOAD_ATTEMPTS; attempt++) {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), TRANSCRIPTION_REQUEST_TIMEOUT_MS);
+      try {
+        const form = new FormData();
+        form.append("audio", blob, "chunk.webm");
+        form.append("stream", streamType);
+        form.append("meeting_session_id", meetingSessionId);
+        const response = await fetch(`${apiBase}/audio/transcribe`, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${sessionToken}` },
+          body: form,
+          signal: controller.signal
+        });
+        if (response.ok) return await response.json().catch(() => null);
+        lastError = `http-${response.status}`;
+        if ([400, 401, 403].includes(response.status)) break;
+      } catch (err) {
+        lastError = err?.name === "AbortError" ? "request-timeout" : err?.message || String(err);
+      } finally {
+        clearTimeout(timeout);
+      }
+      if (attempt < TRANSCRIPTION_UPLOAD_ATTEMPTS) {
+        console.warn(`[Evolvio Offscreen] ${streamType} upload retry ${attempt}/${TRANSCRIPTION_UPLOAD_ATTEMPTS}: ${lastError}`);
+        await sleep(250 * 2 ** (attempt - 1));
+      }
+    }
+    throw new Error(lastError);
+  }
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     if (message.type === "START_MIC_CAPTURE") {
       const { meetingSessionId, sessionToken, apiBase } = message;
@@ -17,20 +56,33 @@
         return;
       }
       stopMicCapture();
+      const startToken = ++micStartToken;
       navigator.mediaDevices.getUserMedia({
         audio: {
-          echoCancellation: false,
-          // Don't interfere with meeting's echo cancellation
-          noiseSuppression: false,
-          autoGainControl: false
+          // This is an independent capture stream. Request processing here so
+          // meeting-speaker audio leaking through the physical mic is less likely
+          // to be transcribed and attributed to the local user.
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true
         }
       }).then((stream) => {
+        if (startToken !== micStartToken) {
+          stream.getTracks().forEach((track) => {
+            try {
+              track.stop();
+            } catch (_) {
+            }
+          });
+          return;
+        }
         const { recorder, interval } = startRecording(stream, "mic", meetingSessionId, sessionToken, apiBase);
         micRecorder = recorder;
         micInterval = interval;
         micSessionId = meetingSessionId;
         console.log("[Evolvio Offscreen] Mic capture started");
       }).catch((err) => {
+        if (startToken !== micStartToken) return;
         console.warn("[Evolvio Offscreen] Mic capture failed:", err.message);
         chrome.runtime.sendMessage({
           type: "AUDIO_CAPTURE_STOPPED",
@@ -47,6 +99,7 @@
         return;
       }
       stopTabCapture();
+      const startToken = ++tabStartToken;
       navigator.mediaDevices.getUserMedia({
         audio: {
           mandatory: {
@@ -56,6 +109,16 @@
         },
         video: false
       }).then((tabStream) => {
+        if (startToken !== tabStartToken) {
+          tabStream.getTracks().forEach((track) => {
+            try {
+              track.stop();
+            } catch (_) {
+            }
+          });
+          return;
+        }
+        tabCaptureStream = tabStream;
         const audioCtx = new AudioContext();
         tabAudioCtx = audioCtx;
         const source = audioCtx.createMediaStreamSource(tabStream);
@@ -68,6 +131,7 @@
         tabSessionId = meetingSessionId;
         console.log("[Evolvio Offscreen] Tab audio split: speakers + recorder both active");
       }).catch((err) => {
+        if (startToken !== tabStartToken) return;
         console.warn("[Evolvio Offscreen] Tab capture failed:", err.message);
         chrome.runtime.sendMessage({
           type: "AUDIO_CAPTURE_STOPPED",
@@ -126,6 +190,7 @@
     return recorder.state === "recording" && recorder.stream.active && recorder.stream.getAudioTracks().some((track) => track.readyState === "live");
   }
   function stopMicCapture() {
+    micStartToken++;
     if (micInterval) {
       clearInterval(micInterval);
       micInterval = null;
@@ -144,6 +209,7 @@
     micSessionId = null;
   }
   function stopTabCapture() {
+    tabStartToken++;
     if (tabInterval) {
       clearInterval(tabInterval);
       tabInterval = null;
@@ -163,6 +229,10 @@
       tabAudioCtx.close().catch(() => {
       });
       tabAudioCtx = null;
+    }
+    if (tabCaptureStream) {
+      tabCaptureStream.getTracks().forEach((t) => t.stop());
+      tabCaptureStream = null;
     }
     tabSessionId = null;
   }
@@ -230,24 +300,18 @@
         const chunkEndedAt = Date.now();
         const chunkStart = chunkStartedAt;
         chunkStartedAt = Date.now();
-        const form = new FormData();
-        form.append("audio", blob, "chunk.webm");
-        form.append("stream", streamType);
-        form.append("meeting_session_id", meetingSessionId);
-        const response = await fetch(`${apiBase}/audio/transcribe`, {
-          method: "POST",
-          headers: { Authorization: `Bearer ${sessionToken}` },
-          body: form
-        }).catch(() => null);
-        if (!response?.ok) {
+        let result;
+        try {
+          result = await transcribeChunkWithRetry(apiBase, sessionToken, blob, streamType, meetingSessionId);
+        } catch (err) {
           consecutiveUploadFailures++;
+          console.warn(`[Evolvio Offscreen] ${streamType} upload exhausted:`, err?.message || err);
           if (consecutiveUploadFailures >= 3) {
-            reportUnexpectedStop("transcription-upload-failed");
+            reportUnexpectedStop("transcription-upload-retries-exhausted");
           }
           return;
         }
         consecutiveUploadFailures = 0;
-        const result = await response.json().catch(() => null);
         if (!result?.text) {
           consecutiveEmptyTranscripts++;
           chunksSinceText++;

@@ -1,10 +1,21 @@
 // src/utils/api-client.ts
-var DEFAULT_API_BASE = "https://gleameet.onrender.com";
+var DEFAULT_API_BASE = "https://evolvio-api-6nch.onrender.com";
+var LEGACY_API_BASES = /* @__PURE__ */ new Set([
+  "https://gleameet.onrender.com",
+  "https://gleameet.onrender.com/"
+]);
+function normalizeApiBase(value) {
+  if (typeof value !== "string" || !value.trim()) return DEFAULT_API_BASE;
+  const normalized = value.trim().replace(/\/+$/, "");
+  return LEGACY_API_BASES.has(value.trim()) || LEGACY_API_BASES.has(normalized) ? DEFAULT_API_BASE : normalized;
+}
 async function getApiBase() {
   return new Promise((resolve) => {
     if (typeof chrome !== "undefined" && chrome.storage?.sync) {
       chrome.storage.sync.get({ backendUrl: DEFAULT_API_BASE }, (items) => {
-        resolve(items.backendUrl || DEFAULT_API_BASE);
+        const apiBase = normalizeApiBase(items.backendUrl);
+        if (apiBase !== items.backendUrl) chrome.storage.sync.set({ backendUrl: apiBase });
+        resolve(apiBase);
       });
     } else {
       resolve(DEFAULT_API_BASE);
@@ -313,10 +324,7 @@ async function handleMessage(message, sender) {
       handleStartAudioCapture(message.meetingSessionId, message.captureMode);
       return { ok: true };
     case "STOP_AUDIO_CAPTURE":
-      chrome.runtime.sendMessage({ type: "STOP_MIC_CAPTURE" }).catch(() => {
-      });
-      chrome.runtime.sendMessage({ type: "STOP_TAB_CAPTURE" }).catch(() => {
-      });
+      await stopOffscreenAudioCapture();
       return { ok: true };
     case "AUDIO_TRANSCRIPT_RESULT":
       broadcastAudioTranscript(message);
@@ -433,6 +441,7 @@ async function handlePauseCoaching() {
     }
     state.status = "ready";
     state.coachingPausedByUser = true;
+    await stopOffscreenAudioCapture();
     await sendMessageToMeetingTabs({
       type: "COACHING_PAUSED",
       meetingSessionId: state.meetingSessionId
@@ -619,8 +628,7 @@ function ensureOffscreenDocument() {
 }
 function handleStartAudioCapture(meetingSessionId, captureMode = state.captureMode) {
   const token = getSessionToken();
-  const apiBase = "https://gleameet.onrender.com";
-  ensureOffscreenDocument().then(() => {
+  Promise.all([ensureOffscreenDocument(), getApiBase()]).then(([, apiBase]) => {
     chrome.runtime.sendMessage({
       type: "START_MIC_CAPTURE",
       meetingSessionId,
@@ -650,6 +658,12 @@ function handleStartAudioCapture(meetingSessionId, captureMode = state.captureMo
       });
     });
   });
+}
+async function stopOffscreenAudioCapture() {
+  await Promise.allSettled([
+    chrome.runtime.sendMessage({ type: "STOP_MIC_CAPTURE" }),
+    chrome.runtime.sendMessage({ type: "STOP_TAB_CAPTURE" })
+  ]);
 }
 async function flushActiveAudioCapture(meetingSessionId) {
   if (!meetingSessionId || state.status !== "active") return;
@@ -923,21 +937,14 @@ async function transcribePageMicAudioChunk(message) {
     return { ok: false, error: "missing-token" };
   }
   try {
-    const audioBlob = await fetch(message.dataUrl).then((response2) => response2.blob());
-    const form = new FormData();
-    form.append("audio", audioBlob, "chunk.webm");
-    form.append("stream", "mic");
-    form.append("meeting_session_id", message.meetingSessionId);
-    const response = await fetch("https://gleameet.onrender.com/audio/transcribe", {
-      method: "POST",
-      headers: { Authorization: `Bearer ${token}` },
-      body: form
-    });
-    if (!response.ok) {
-      bufferCaptureDiagnostic("page_mic_transcribe_failed", { status: response.status });
-      return { ok: false, error: `http-${response.status}` };
-    }
-    const result = await response.json().catch(() => null);
+    const audioBlob = await fetch(message.dataUrl).then((response) => response.blob());
+    const apiBase = await getApiBase();
+    const result = await postPageMicTranscriptionWithRetry(
+      apiBase,
+      token,
+      audioBlob,
+      message.meetingSessionId
+    );
     if (!result?.text) {
       bufferCaptureDiagnostic("page_mic_transcribe_empty");
       return { ok: true, skipped: true };
@@ -954,6 +961,43 @@ async function transcribePageMicAudioChunk(message) {
     bufferCaptureDiagnostic("page_mic_transcribe_error", { message: err?.message || String(err) });
     return { ok: false, error: err?.message || String(err) };
   }
+}
+var PAGE_MIC_TRANSCRIPTION_TIMEOUT_MS = 3e4;
+var PAGE_MIC_TRANSCRIPTION_ATTEMPTS = 4;
+function delayPageMicRetry(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+async function postPageMicTranscriptionWithRetry(apiBase, token, audioBlob, meetingSessionId) {
+  let lastError = "unknown-transcription-error";
+  for (let attempt = 1; attempt <= PAGE_MIC_TRANSCRIPTION_ATTEMPTS; attempt++) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), PAGE_MIC_TRANSCRIPTION_TIMEOUT_MS);
+    try {
+      const form = new FormData();
+      form.append("audio", audioBlob, "chunk.webm");
+      form.append("stream", "mic");
+      form.append("meeting_session_id", meetingSessionId);
+      const response = await fetch(`${apiBase}/audio/transcribe`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+        body: form,
+        signal: controller.signal
+      });
+      if (response.ok) return await response.json().catch(() => null);
+      lastError = `http-${response.status}`;
+      bufferCaptureDiagnostic("page_mic_transcribe_attempt_failed", { status: response.status, attempt });
+      if ([400, 401, 403].includes(response.status)) break;
+    } catch (err) {
+      lastError = err?.name === "AbortError" ? "request-timeout" : err?.message || String(err);
+      bufferCaptureDiagnostic("page_mic_transcribe_attempt_failed", { message: lastError, attempt });
+    } finally {
+      clearTimeout(timeout);
+    }
+    if (attempt < PAGE_MIC_TRANSCRIPTION_ATTEMPTS) {
+      await delayPageMicRetry(250 * 2 ** (attempt - 1));
+    }
+  }
+  throw new Error(lastError);
 }
 function bufferCaptureDiagnostic(reason, detail = {}, message = {}) {
   const meetingSessionId = typeof message.meetingSessionId === "string" ? message.meetingSessionId : state.meetingSessionId;

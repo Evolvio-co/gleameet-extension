@@ -191,6 +191,7 @@
     speechObserver: null,
     captionObserver: null,
     userSpeaking: false,
+    lastUserSpeechObservedMs: 0,
     lastSpeechEmitMs: 0,
     eventsEmitted: 0,
     diagnosticInterval: null,
@@ -220,6 +221,7 @@
     'div[class*="iOzk7"] span'
   ];
   var SPEECH_THROTTLE_MS = 500;
+  var USER_SPEECH_STALE_MS = 15e3;
   var transcriptAttribution = new TranscriptAttributionTracker();
   function rememberSelfName(name) {
     const normalized = (name || "").trim();
@@ -550,6 +552,85 @@
   var pageMicConsecutiveEmptyTranscripts = 0;
   var pageMicConsecutiveTinyChunks = 0;
   var pageMicFlushResolvers = [];
+  var PAGE_MIC_MAX_QUEUED_CHUNKS = 60;
+  var PAGE_MIC_UPLOAD_ATTEMPTS = 4;
+  var pageMicUploadQueue = [];
+  var pageMicUploadInFlight = false;
+  function delay(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+  async function sendPageMicChunkWithRetry(chunk) {
+    let lastError = "unknown-upload-error";
+    for (let attempt = 1; attempt <= PAGE_MIC_UPLOAD_ATTEMPTS; attempt++) {
+      try {
+        const response = await chrome.runtime.sendMessage({
+          type: "PAGE_MIC_AUDIO_CHUNK",
+          meetingSessionId: chunk.meetingSessionId,
+          dataUrl: chunk.dataUrl,
+          mimeType: chunk.mimeType,
+          startOffsetMs: chunk.startOffsetMs,
+          endOffsetMs: chunk.endOffsetMs,
+          eventTimeMs: chunk.endOffsetMs
+        });
+        if (!response?.error) return response;
+        lastError = String(response.error);
+      } catch (err) {
+        lastError = err?.message || String(err);
+      }
+      if (attempt < PAGE_MIC_UPLOAD_ATTEMPTS) {
+        sendCaptureDiagnostic("page_mic_chunk_retrying", {
+          attempt,
+          queue_depth: pageMicUploadQueue.length,
+          message: lastError
+        });
+        await delay(250 * 2 ** (attempt - 1));
+      }
+    }
+    return { error: lastError };
+  }
+  async function drainPageMicUploadQueue() {
+    if (pageMicUploadInFlight) return;
+    pageMicUploadInFlight = true;
+    try {
+      while (pageMicUploadQueue.length > 0) {
+        const chunk = pageMicUploadQueue[0];
+        if (state.meetingSessionId !== chunk.meetingSessionId || state.status !== "active") {
+          pageMicUploadQueue.shift();
+          continue;
+        }
+        const response = await sendPageMicChunkWithRetry(chunk);
+        pageMicUploadQueue.shift();
+        if (response?.text) {
+          pageMicConsecutiveUploadFailures = 0;
+          pageMicConsecutiveEmptyTranscripts = 0;
+          pageMicConsecutiveTinyChunks = 0;
+          pageMicChunksSinceText = 0;
+          lastPageMicTranscriptTextAt = Date.now();
+          continue;
+        }
+        if (response?.error) {
+          pageMicConsecutiveUploadFailures++;
+          sendCaptureDiagnostic("page_mic_chunk_upload_exhausted", {
+            queue_depth: pageMicUploadQueue.length,
+            message: String(response.error)
+          });
+          if (pageMicConsecutiveUploadFailures >= 3) {
+            restartPageMicrophoneCapture("transcription-upload-retries-exhausted", chunk.meetingSessionId);
+          }
+          continue;
+        }
+        pageMicConsecutiveUploadFailures = 0;
+        pageMicConsecutiveEmptyTranscripts++;
+        pageMicChunksSinceText++;
+        if (pageMicConsecutiveEmptyTranscripts >= 6 && pageMicChunksSinceText >= 6 && Date.now() - lastPageMicTranscriptTextAt > 6e4) {
+          restartPageMicrophoneCapture("transcription-stalled", chunk.meetingSessionId);
+        }
+      }
+    } finally {
+      pageMicUploadInFlight = false;
+      if (pageMicUploadQueue.length > 0) void drainPageMicUploadQueue();
+    }
+  }
   function resetPageMicHealth() {
     const now = Date.now();
     lastPageMicDataAvailableAt = now;
@@ -632,9 +713,12 @@
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
-          echoCancellation: false,
-          noiseSuppression: false,
-          autoGainControl: false
+          // This is a second mic stream, independent of the meeting app's own
+          // stream. Explicitly request browser processing here to suppress speaker
+          // output leaking back into the mic and being labelled as "You".
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true
         }
       });
       const recorder = new MediaRecorder(stream, { mimeType: "audio/webm" });
@@ -676,42 +760,23 @@
           const chunkEndedAt = Date.now();
           const chunkStartedAt = pageMicChunkStartedAt || chunkEndedAt;
           pageMicChunkStartedAt = Date.now();
-          try {
-            const response = await chrome.runtime.sendMessage({
-              type: "PAGE_MIC_AUDIO_CHUNK",
-              meetingSessionId,
-              dataUrl: await blobToDataUrl(event.data),
-              mimeType: event.data.type || "audio/webm",
-              startOffsetMs: chunkStartedAt,
-              endOffsetMs: chunkEndedAt,
-              eventTimeMs: chunkEndedAt
+          const dataUrl = await blobToDataUrl(event.data);
+          if (pageMicUploadQueue.length >= PAGE_MIC_MAX_QUEUED_CHUNKS) {
+            sendCaptureDiagnostic("page_mic_upload_queue_full", {
+              queue_depth: pageMicUploadQueue.length,
+              max_queue_depth: PAGE_MIC_MAX_QUEUED_CHUNKS
             });
-            if (response?.text) {
-              pageMicConsecutiveUploadFailures = 0;
-              pageMicConsecutiveEmptyTranscripts = 0;
-              pageMicConsecutiveTinyChunks = 0;
-              pageMicChunksSinceText = 0;
-              lastPageMicTranscriptTextAt = Date.now();
-            } else if (response?.error) {
-              pageMicConsecutiveUploadFailures++;
-              if (pageMicConsecutiveUploadFailures >= 3) {
-                restartPageMicrophoneCapture("transcription-upload-failed", meetingSessionId);
-              }
-            } else {
-              pageMicConsecutiveUploadFailures = 0;
-              pageMicConsecutiveEmptyTranscripts++;
-              pageMicChunksSinceText++;
-              if (pageMicConsecutiveEmptyTranscripts >= 6 && pageMicChunksSinceText >= 6 && Date.now() - lastPageMicTranscriptTextAt > 6e4) {
-                restartPageMicrophoneCapture("transcription-stalled", meetingSessionId);
-              }
-            }
-          } catch (err) {
-            pageMicConsecutiveUploadFailures++;
-            sendCaptureDiagnostic("page_mic_chunk_send_failed", { message: err?.message || String(err) });
-            if (pageMicConsecutiveUploadFailures >= 3) {
-              restartPageMicrophoneCapture("chunk-send-failed", meetingSessionId);
-            }
+            restartPageMicrophoneCapture("upload-queue-full", meetingSessionId);
+            return;
           }
+          pageMicUploadQueue.push({
+            meetingSessionId,
+            dataUrl,
+            mimeType: event.data.type || "audio/webm",
+            startOffsetMs: chunkStartedAt,
+            endOffsetMs: chunkEndedAt
+          });
+          void drainPageMicUploadQueue();
         } finally {
           settlePageMicFlushes();
         }
@@ -1283,7 +1348,11 @@
           break;
         }
         markWhisperActive();
-        const candidateSpeaker = stream === "tab" ? "other" : state.captureMode === "full_meeting" && !state.userSpeaking ? "other" : "user";
+        const userSpeechIsFresh = state.userSpeaking && state.lastUserSpeechObservedMs > 0 && Date.now() - state.lastUserSpeechObservedMs <= USER_SPEECH_STALE_MS;
+        if (state.userSpeaking && !userSpeechIsFresh) {
+          state.userSpeaking = false;
+        }
+        const candidateSpeaker = stream === "tab" ? "other" : state.captureMode === "full_meeting" && !userSpeechIsFresh ? "other" : "user";
         emitTranscriptSegment(
           message.text || "",
           candidateSpeaker,

@@ -24801,12 +24801,23 @@
   var import_react = __toESM(require_react());
 
   // src/utils/api-client.ts
-  var DEFAULT_API_BASE = "https://gleameet.onrender.com";
+  var DEFAULT_API_BASE = "https://evolvio-api-6nch.onrender.com";
+  var LEGACY_API_BASES = /* @__PURE__ */ new Set([
+    "https://gleameet.onrender.com",
+    "https://gleameet.onrender.com/"
+  ]);
+  function normalizeApiBase(value) {
+    if (typeof value !== "string" || !value.trim()) return DEFAULT_API_BASE;
+    const normalized = value.trim().replace(/\/+$/, "");
+    return LEGACY_API_BASES.has(value.trim()) || LEGACY_API_BASES.has(normalized) ? DEFAULT_API_BASE : normalized;
+  }
   async function getApiBase() {
     return new Promise((resolve) => {
       if (typeof chrome !== "undefined" && chrome.storage?.sync) {
         chrome.storage.sync.get({ backendUrl: DEFAULT_API_BASE }, (items) => {
-          resolve(items.backendUrl || DEFAULT_API_BASE);
+          const apiBase = normalizeApiBase(items.backendUrl);
+          if (apiBase !== items.backendUrl) chrome.storage.sync.set({ backendUrl: apiBase });
+          resolve(apiBase);
         });
       } else {
         resolve(DEFAULT_API_BASE);
