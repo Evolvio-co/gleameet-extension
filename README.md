@@ -2,14 +2,14 @@
 
 Chrome extension for private real-time behavioral coaching during Zoom web, Google Meet, and Microsoft Teams web meetings.
 
-Latest public build: **v1.0.115**
+Latest public build: **v1.0.118**
 
-- Latest download: [evolvio-extension-1.0.115.zip](https://github.com/rajivchandrasekaran-paintrobot/gleameet-extension/raw/main/evolvio-extension-1.0.115.zip)
-- Versioned download: [evolvio-extension-1.0.115.zip](https://github.com/rajivchandrasekaran-paintrobot/gleameet-extension/raw/main/evolvio-extension-1.0.115.zip)
+- **Fixed latest-download URL:** [evolvio-extension.zip](https://github.com/Evolvio-co/gleameet-extension/raw/main/evolvio-extension.zip)
+- Versioned download: [evolvio-extension-1.0.118.zip](https://github.com/Evolvio-co/gleameet-extension/raw/main/evolvio-extension-1.0.118.zip)
 
 ## Installation
 
-1. Download [evolvio-extension-1.0.115.zip](https://github.com/rajivchandrasekaran-paintrobot/gleameet-extension/raw/main/evolvio-extension-1.0.115.zip)
+1. Download [evolvio-extension.zip](https://github.com/Evolvio-co/gleameet-extension/raw/main/evolvio-extension.zip)
 2. Unzip the file
 3. Open Chrome and go to `chrome://extensions`
 4. Enable **Developer mode** using the top-right toggle
