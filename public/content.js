@@ -614,17 +614,15 @@
             queue_depth: pageMicUploadQueue.length,
             message: String(response.error)
           });
-          if (pageMicConsecutiveUploadFailures >= 3) {
-            restartPageMicrophoneCapture("transcription-upload-retries-exhausted", chunk.meetingSessionId);
-          }
           continue;
         }
         pageMicConsecutiveUploadFailures = 0;
         pageMicConsecutiveEmptyTranscripts++;
         pageMicChunksSinceText++;
-        if (pageMicConsecutiveEmptyTranscripts >= 6 && pageMicChunksSinceText >= 6 && Date.now() - lastPageMicTranscriptTextAt > 6e4) {
-          restartPageMicrophoneCapture("transcription-stalled", chunk.meetingSessionId);
-        }
+        sendCaptureDiagnostic("page_mic_chunk_empty", {
+          queue_depth: pageMicUploadQueue.length,
+          consecutive_empty: pageMicConsecutiveEmptyTranscripts
+        });
       }
     } finally {
       pageMicUploadInFlight = false;
@@ -751,9 +749,7 @@
           if (!event.data || event.data.size < 1e3) {
             pageMicConsecutiveTinyChunks++;
             pageMicChunksSinceText++;
-            if (pageMicConsecutiveTinyChunks >= 12 && pageMicChunksSinceText >= 12 && Date.now() - lastPageMicTranscriptTextAt > 12e4) {
-              restartPageMicrophoneCapture("audio-chunks-too-small", meetingSessionId);
-            }
+            sendCaptureDiagnostic("page_mic_chunk_too_small", { size: event.data?.size || 0 });
             return;
           }
           pageMicConsecutiveTinyChunks = 0;
@@ -766,7 +762,6 @@
               queue_depth: pageMicUploadQueue.length,
               max_queue_depth: PAGE_MIC_MAX_QUEUED_CHUNKS
             });
-            restartPageMicrophoneCapture("upload-queue-full", meetingSessionId);
             return;
           }
           pageMicUploadQueue.push({
@@ -781,7 +776,7 @@
           settlePageMicFlushes();
         }
       };
-      recorder.start();
+      recorder.start(1e4);
       pageMicInterval = setInterval(() => {
         if (!pageMicRecorder || pageMicRecorder.state !== "recording") {
           restartPageMicrophoneCapture("not-recording", meetingSessionId);
@@ -795,13 +790,7 @@
           restartPageMicrophoneCapture("no-audio-chunks", meetingSessionId);
           return;
         }
-        try {
-          pageMicRecorder.requestData();
-        } catch (err) {
-          sendCaptureDiagnostic("page_mic_request_data_failed", { message: err?.message || String(err) });
-          restartPageMicrophoneCapture("request-data-failed", meetingSessionId);
-        }
-      }, 1e4);
+      }, 15e3);
     } catch (err) {
       sendCaptureDiagnostic("page_mic_start_failed", {
         name: err?.name,

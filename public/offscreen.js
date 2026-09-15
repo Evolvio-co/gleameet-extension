@@ -15,6 +15,7 @@
   var flushResolvers = /* @__PURE__ */ new Map();
   var TRANSCRIPTION_REQUEST_TIMEOUT_MS = 3e4;
   var TRANSCRIPTION_UPLOAD_ATTEMPTS = 4;
+  var MAX_QUEUED_TRANSCRIPTION_CHUNKS = 90;
   function sleep(ms) {
     return new Promise((resolve) => setTimeout(resolve, ms));
   }
@@ -241,12 +242,19 @@
     let chunkStartedAt = Date.now();
     let stopReported = false;
     let interval = null;
-    let lastTranscriptTextAt = Date.now();
-    let chunksSinceText = 0;
     let consecutiveUploadFailures = 0;
-    let consecutiveEmptyTranscripts = 0;
-    let consecutiveTinyChunks = 0;
     let lastDataAvailableAt = Date.now();
+    const uploadQueue = [];
+    let uploadInFlight = false;
+    const sendDiagnostic = (reason, detail = {}) => {
+      chrome.runtime.sendMessage({
+        type: "CAPTURE_DIAGNOSTIC",
+        meetingSessionId,
+        reason,
+        detail: { stream: streamType, ...detail }
+      }).catch(() => {
+      });
+    };
     const reportUnexpectedStop = (reason) => {
       if (stopReported || expectedRecorderStops.has(recorder)) return;
       stopReported = true;
@@ -284,60 +292,70 @@
         }, 3e4);
       });
     });
+    const drainUploadQueue = async () => {
+      if (uploadInFlight) return;
+      uploadInFlight = true;
+      try {
+        while (uploadQueue.length > 0) {
+          const chunk = uploadQueue[0];
+          let result;
+          try {
+            result = await transcribeChunkWithRetry(apiBase, sessionToken, chunk.blob, streamType, meetingSessionId);
+          } catch (err) {
+            consecutiveUploadFailures++;
+            sendDiagnostic("offscreen_chunk_upload_exhausted", {
+              queue_depth: uploadQueue.length,
+              message: err?.message || String(err)
+            });
+            uploadQueue.shift();
+            continue;
+          }
+          uploadQueue.shift();
+          consecutiveUploadFailures = 0;
+          if (!result?.text) {
+            sendDiagnostic("offscreen_chunk_empty", { queue_depth: uploadQueue.length });
+            continue;
+          }
+          chrome.runtime.sendMessage({
+            type: "AUDIO_TRANSCRIPT_RESULT",
+            text: result.text,
+            stream: streamType,
+            startOffsetMs: chunk.startOffsetMs,
+            endOffsetMs: chunk.endOffsetMs,
+            eventTimeMs: chunk.endOffsetMs
+          }).catch(() => {
+          });
+        }
+      } finally {
+        uploadInFlight = false;
+        if (uploadQueue.length > 0) void drainUploadQueue();
+      }
+    };
     recorder.ondataavailable = async (e) => {
       try {
         lastDataAvailableAt = Date.now();
         if (!e.data || e.data.size < 1e3) {
-          consecutiveTinyChunks++;
-          chunksSinceText++;
-          if (consecutiveTinyChunks >= 12 && chunksSinceText >= 12 && Date.now() - lastTranscriptTextAt > 12e4) {
-            reportUnexpectedStop("audio-chunks-too-small");
-          }
+          sendDiagnostic("offscreen_chunk_too_small", { size: e.data?.size || 0 });
           return;
         }
-        consecutiveTinyChunks = 0;
-        const blob = e.data;
         const chunkEndedAt = Date.now();
         const chunkStart = chunkStartedAt;
         chunkStartedAt = Date.now();
-        let result;
-        try {
-          result = await transcribeChunkWithRetry(apiBase, sessionToken, blob, streamType, meetingSessionId);
-        } catch (err) {
-          consecutiveUploadFailures++;
-          console.warn(`[Evolvio Offscreen] ${streamType} upload exhausted:`, err?.message || err);
-          if (consecutiveUploadFailures >= 3) {
-            reportUnexpectedStop("transcription-upload-retries-exhausted");
-          }
+        if (uploadQueue.length >= MAX_QUEUED_TRANSCRIPTION_CHUNKS) {
+          sendDiagnostic("offscreen_upload_queue_full", {
+            queue_depth: uploadQueue.length,
+            max_queue_depth: MAX_QUEUED_TRANSCRIPTION_CHUNKS
+          });
+          reportUnexpectedStop("upload-queue-full");
           return;
         }
-        consecutiveUploadFailures = 0;
-        if (!result?.text) {
-          consecutiveEmptyTranscripts++;
-          chunksSinceText++;
-          if (consecutiveEmptyTranscripts >= 6 && chunksSinceText >= 6 && Date.now() - lastTranscriptTextAt > 6e4) {
-            reportUnexpectedStop("transcription-stalled");
-          }
-          return;
-        }
-        consecutiveEmptyTranscripts = 0;
-        consecutiveTinyChunks = 0;
-        chunksSinceText = 0;
-        lastTranscriptTextAt = Date.now();
-        chrome.runtime.sendMessage({
-          type: "AUDIO_TRANSCRIPT_RESULT",
-          text: result.text,
-          stream: streamType,
-          startOffsetMs: chunkStart,
-          endOffsetMs: chunkEndedAt,
-          eventTimeMs: chunkEndedAt
-        }).catch(() => {
-        });
+        uploadQueue.push({ blob: e.data, startOffsetMs: chunkStart, endOffsetMs: chunkEndedAt });
+        void drainUploadQueue();
       } finally {
         settleFlushes(recorder);
       }
     };
-    recorder.start();
+    recorder.start(1e4);
     interval = setInterval(() => {
       const liveAudioTrack = stream.getAudioTracks().some((track) => track.readyState === "live");
       if (recorder.state !== "recording" || !stream.active || !liveAudioTrack) {
@@ -348,12 +366,7 @@
         reportUnexpectedStop("no-audio-chunks");
         return;
       }
-      try {
-        recorder.requestData();
-      } catch (_) {
-        reportUnexpectedStop("request-data-failed");
-      }
-    }, 1e4);
+    }, 15e3);
     return { recorder, interval };
   }
 })();
