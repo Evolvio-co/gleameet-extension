@@ -496,8 +496,17 @@
       console.log(`[Evolvio] ${platform}: using mic-first signal capture; DOM-only Meet signals disabled`);
       startMicrophoneDetection();
     }
-    if (platform === "google_meet" && state.captureMode === "user_voice_only") {
+    if (platform === "google_meet") {
       startPageMicrophoneCapture();
+      if (state.captureMode !== "user_voice_only") {
+        chrome.runtime.sendMessage({
+          type: "START_AUDIO_CAPTURE",
+          meetingSessionId: state.meetingSessionId,
+          captureMode: state.captureMode
+        }).catch((err) => {
+          sendCaptureDiagnostic("start_tab_capture_message_failed", { message: err?.message || String(err) });
+        });
+      }
     } else {
       chrome.runtime.sendMessage({
         type: "START_AUDIO_CAPTURE",
@@ -552,7 +561,8 @@
   var pageMicConsecutiveEmptyTranscripts = 0;
   var pageMicConsecutiveTinyChunks = 0;
   var pageMicFlushResolvers = [];
-  var PAGE_MIC_MAX_QUEUED_CHUNKS = 60;
+  var PAGE_MIC_TRANSCRIPTION_CADENCE_MS = 3e4;
+  var PAGE_MIC_MAX_QUEUED_CHUNKS = 120;
   var PAGE_MIC_UPLOAD_ATTEMPTS = 4;
   var pageMicUploadQueue = [];
   var pageMicUploadInFlight = false;
@@ -685,13 +695,14 @@
     });
   }
   function restartPageMicrophoneCapture(reason, meetingSessionId) {
-    if (state.status !== "active" || state.captureMode !== "user_voice_only" || state.meetingSessionId !== meetingSessionId) {
+    const pageMicIsRequired = state.captureMode === "user_voice_only" || state.platform === "google_meet";
+    if (state.status !== "active" || !pageMicIsRequired || state.meetingSessionId !== meetingSessionId) {
       return;
     }
     sendCaptureDiagnostic("page_mic_capture_restarting", { reason });
     stopPageMicrophoneCapture({ expected: true });
     setTimeout(() => {
-      if (state.status === "active" && state.captureMode === "user_voice_only" && state.meetingSessionId === meetingSessionId) {
+      if (state.status === "active" && (state.captureMode === "user_voice_only" || state.platform === "google_meet") && state.meetingSessionId === meetingSessionId) {
         startPageMicrophoneCapture().catch((err) => {
           sendCaptureDiagnostic("page_mic_restart_failed", {
             reason,
@@ -762,7 +773,10 @@
               queue_depth: pageMicUploadQueue.length,
               max_queue_depth: PAGE_MIC_MAX_QUEUED_CHUNKS
             });
-            return;
+            pageMicUploadQueue.shift();
+            sendCaptureDiagnostic("page_mic_upload_queue_drop_oldest", {
+              queue_depth: pageMicUploadQueue.length
+            });
           }
           pageMicUploadQueue.push({
             meetingSessionId,
@@ -776,7 +790,7 @@
           settlePageMicFlushes();
         }
       };
-      recorder.start(1e4);
+      recorder.start(PAGE_MIC_TRANSCRIPTION_CADENCE_MS);
       pageMicInterval = setInterval(() => {
         if (!pageMicRecorder || pageMicRecorder.state !== "recording") {
           restartPageMicrophoneCapture("not-recording", meetingSessionId);
@@ -799,7 +813,9 @@
       chrome.runtime.sendMessage({
         type: "START_AUDIO_CAPTURE",
         meetingSessionId,
-        captureMode: state.captureMode
+        captureMode: state.captureMode,
+        // This path only runs when Google Meet's page recorder could not start.
+        forceOffscreenMic: true
       }).catch(() => {
       });
     }

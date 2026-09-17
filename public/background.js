@@ -321,7 +321,11 @@ async function handleMessage(message, sender) {
     case "ACK_PROMPT":
       return handleAckPrompt(message);
     case "START_AUDIO_CAPTURE":
-      handleStartAudioCapture(message.meetingSessionId, message.captureMode);
+      handleStartAudioCapture(
+        message.meetingSessionId,
+        message.captureMode,
+        message.forceOffscreenMic === true
+      );
       return { ok: true };
     case "STOP_AUDIO_CAPTURE":
       await stopOffscreenAudioCapture();
@@ -626,16 +630,19 @@ function ensureOffscreenDocument() {
   }).catch(() => {
   });
 }
-function handleStartAudioCapture(meetingSessionId, captureMode = state.captureMode) {
+function handleStartAudioCapture(meetingSessionId, captureMode = state.captureMode, forceOffscreenMic = false) {
   const token = getSessionToken();
   Promise.all([ensureOffscreenDocument(), getApiBase()]).then(([, apiBase]) => {
-    chrome.runtime.sendMessage({
-      type: "START_MIC_CAPTURE",
-      meetingSessionId,
-      sessionToken: token,
-      apiBase
-    }).catch(() => {
-    });
+    const usePageMic = state.platform === "google_meet" && !forceOffscreenMic;
+    if (!usePageMic) {
+      chrome.runtime.sendMessage({
+        type: "START_MIC_CAPTURE",
+        meetingSessionId,
+        sessionToken: token,
+        apiBase
+      }).catch(() => {
+      });
+    }
     if (captureMode === "user_voice_only") {
       console.log("[Evolvio] User-voice-only mode: skipping tab audio capture");
       return;

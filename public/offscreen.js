@@ -15,7 +15,8 @@
   var flushResolvers = /* @__PURE__ */ new Map();
   var TRANSCRIPTION_REQUEST_TIMEOUT_MS = 3e4;
   var TRANSCRIPTION_UPLOAD_ATTEMPTS = 4;
-  var MAX_QUEUED_TRANSCRIPTION_CHUNKS = 90;
+  var TRANSCRIPTION_CADENCE_MS = 3e4;
+  var MAX_QUEUED_TRANSCRIPTION_CHUNKS = 120;
   function sleep(ms) {
     return new Promise((resolve) => setTimeout(resolve, ms));
   }
@@ -346,8 +347,10 @@
             queue_depth: uploadQueue.length,
             max_queue_depth: MAX_QUEUED_TRANSCRIPTION_CHUNKS
           });
-          reportUnexpectedStop("upload-queue-full");
-          return;
+          uploadQueue.shift();
+          sendDiagnostic("offscreen_upload_queue_drop_oldest", {
+            queue_depth: uploadQueue.length
+          });
         }
         uploadQueue.push({ blob: e.data, startOffsetMs: chunkStart, endOffsetMs: chunkEndedAt });
         void drainUploadQueue();
@@ -355,7 +358,7 @@
         settleFlushes(recorder);
       }
     };
-    recorder.start(1e4);
+    recorder.start(TRANSCRIPTION_CADENCE_MS);
     interval = setInterval(() => {
       const liveAudioTrack = stream.getAudioTracks().some((track) => track.readyState === "live");
       if (recorder.state !== "recording" || !stream.active || !liveAudioTrack) {
