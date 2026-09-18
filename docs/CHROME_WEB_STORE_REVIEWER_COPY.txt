@@ -1,5 +1,5 @@
 Product: Evolvio — AI Meeting Coach
-Version: 1.0.122
+Version: 1.0.123
 
 Single purpose
 Evolvio provides private, real-time communication coaching and post-meeting feedback to the signed-in user during supported browser-based meetings.
@@ -12,7 +12,7 @@ How to test
 5. Click Stop Coaching to pause or End Meeting to create a post-meeting report.
 
 Permission explanation
-Evolvio requests microphone access through Chrome's standard getUserMedia prompt only after the user clicks Start Coaching; it does not declare the invalid audioCapture manifest permission. Meeting-tab audio is used only when the user explicitly selects Full meeting mode. The extension uses the meeting-site permissions only to detect supported meeting pages and display its private overlay. Google identity is used only for sign-in with openid, email, and profile.
+Evolvio requests microphone access through Chrome's standard page-level getUserMedia flow only after the user clicks Start Coaching; it does not declare the invalid audioCapture manifest permission. Meeting-tab audio is used only when the user explicitly selects Full meeting mode. The extension uses the meeting-site permissions only to detect supported meeting pages and display its private overlay. Google identity is used only for sign-in with openid, email, and profile.
 
 Privacy summary
 Evolvio does not sell user data, use it for advertising, or use it to train AI models. Audio capture starts only after the user starts coaching. The user may choose microphone-only coaching, or explicitly select full-meeting mode for broader meeting context. See the public privacy policy URL entered in the dashboard.

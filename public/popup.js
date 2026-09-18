@@ -23659,8 +23659,8 @@
       };
       exports.MAX_PROMPTS_PER_30_MIN = {
         "minimal": 15,
-        // Keep standard coaching alive through long meetings; the 15s global cooldown
-        // remains the effective throttle.
+        // Standard coaching is evaluated on each 30-second transcript window.
+        // The backend's 30-second global cooldown is the effective throttle.
         "standard": 120,
         "high-support": 120
       };
