@@ -1,5 +1,5 @@
 Product: Evolvio — AI Meeting Coach
-Version: 1.0.123
+Version: 1.0.124
 
 Single purpose
 Evolvio provides private, real-time communication coaching and post-meeting feedback to the signed-in user during supported browser-based meetings.

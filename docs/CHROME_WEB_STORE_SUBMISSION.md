@@ -1,8 +1,8 @@
 # Evolvio — Chrome Web Store Submission Pack
 
 **Product:** Evolvio — AI Meeting Coach
-**Package version:** 1.0.123
-**Upload artifact:** `evolvio-extension-1.0.123.zip`
+**Package version:** 1.0.124
+**Upload artifact:** `evolvio-extension-1.0.124.zip`
 **Store:** Chrome Web Store (not Google Play)
 
 ## 1. Listing copy
@@ -114,8 +114,8 @@ Do not use screenshots that show real meeting participants, personal data, or tr
 
 ## 8. Pre-submit checklist
 
-- [ ] Upload the exact package `evolvio-extension-1.0.123.zip`.
-- [ ] Verify package manifest version is `1.0.123`.
+- [ ] Upload the exact package `evolvio-extension-1.0.124.zip`.
+- [ ] Verify package manifest version is `1.0.124`.
 - [ ] Verify the live backend URL in the manifest is current.
 - [ ] Publish and test the public privacy-policy URL.
 - [ ] Publish and test the support URL/email.
@@ -127,8 +127,8 @@ Do not use screenshots that show real meeting participants, personal data, or tr
 
 ## 9. Release notes
 
-**Version 1.0.123**
+**Version 1.0.124**
 
 - Removes the invalid `audioCapture` manifest permission.
-- Restores page-level microphone capture on supported meeting pages, avoiding a separate popup-permission regression.
+- Removes the popup microphone preflight and restores page-level microphone capture on supported meeting pages.
 - Uses 30-second transcript/coaching windows while keeping the locked listing name and description, full-meeting capture choice, and `tabs` permission.
