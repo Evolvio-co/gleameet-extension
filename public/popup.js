@@ -25289,26 +25289,45 @@
         setLoading(false);
       }
     };
-    const handleStartCoaching = () => {
+    const handleStartCoaching = async () => {
       const resolvedCaptureMode = allowFullMeetingCapture ? captureMode : import_shared.DEFAULT_CAPTURE_MODE;
       const captureOtherParticipants = resolvedCaptureMode !== "user_voice_only";
-      chrome.runtime.sendMessage({
-        type: "START_COACHING",
-        platform: state.platform,
-        captureMode: resolvedCaptureMode,
-        consent: {
-          consent_version: "1.0",
-          scope: {
-            capture_audio_events: true,
-            capture_transcript: true,
-            capture_timing: true,
-            live_coaching: true,
-            post_meeting_report: true,
-            capture_mode: resolvedCaptureMode,
-            capture_other_participants: captureOtherParticipants
-          }
-        }
-      });
+      setLoading(true);
+      setError(null);
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        stream.getTracks().forEach((track) => track.stop());
+        await new Promise((resolve, reject) => {
+          chrome.runtime.sendMessage({
+            type: "START_COACHING",
+            platform: state.platform,
+            captureMode: resolvedCaptureMode,
+            consent: {
+              consent_version: "1.0",
+              scope: {
+                capture_audio_events: true,
+                capture_transcript: true,
+                capture_timing: true,
+                live_coaching: true,
+                post_meeting_report: true,
+                capture_mode: resolvedCaptureMode,
+                capture_other_participants: captureOtherParticipants
+              }
+            }
+          }, (response) => {
+            if (chrome.runtime.lastError || response?.error) {
+              reject(new Error(chrome.runtime.lastError?.message || response?.error || "Could not start coaching"));
+              return;
+            }
+            resolve();
+          });
+        });
+      } catch (err) {
+        const denied = err?.name === "NotAllowedError";
+        setError(denied ? "Microphone access is required for coaching. Click Allow in Chrome, then try Start Coaching again." : err?.message || "Unable to request microphone access.");
+      } finally {
+        setLoading(false);
+      }
     };
     const handleStopCoaching = () => {
       chrome.runtime.sendMessage({ type: "STOP_COACHING" });

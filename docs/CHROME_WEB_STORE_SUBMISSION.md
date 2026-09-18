@@ -1,8 +1,8 @@
 # Evolvio — Chrome Web Store Submission Pack
 
-**Product:** Evolvio — AI Meeting Coach  
-**Package version:** 1.0.117  
-**Upload artifact:** `evolvio-extension-1.0.117.zip`  
+**Product:** Evolvio — AI Meeting Coach
+**Package version:** 1.0.122
+**Upload artifact:** `evolvio-extension-1.0.122.zip`
 **Store:** Chrome Web Store (not Google Play)
 
 ## 1. Listing copy
@@ -33,7 +33,6 @@ Evolvio provides private, real-time communication coaching and post-meeting feed
 
 | Permission | Why Evolvio needs it |
 | --- | --- |
-| `audioCapture` | Captures the user's microphone only after the user starts coaching, so Evolvio can transcribe selected audio and generate coaching. |
 | `tabCapture` | Captures meeting-tab audio only when the user explicitly selects full-meeting mode. |
 | `activeTab` | Identifies the currently active supported meeting tab when the user opens the extension. |
 | `tabs` | Finds an already-open supported meeting tab and keeps coaching associated with that tab. |
@@ -44,6 +43,8 @@ Evolvio provides private, real-time communication coaching and post-meeting feed
 | `identity` | Signs the user in with Google using OpenID Connect; only `openid`, `email`, and `profile` scopes are requested. |
 | Meeting-site host permissions | Enables the overlay and meeting detection only on Google Meet, Zoom Web, and Microsoft Teams Web. |
 | Evolvio API host permission | Sends authenticated transcript/audio requests and retrieves private coaching prompts from Evolvio's backend. |
+
+Microphone access is **not** a manifest permission. When the user clicks **Start Coaching**, Evolvio requests microphone access through Chrome's standard `getUserMedia` prompt from the extension popup. If the user declines, coaching does not start.
 
 ## 4. Privacy-practices answers
 
@@ -93,7 +94,7 @@ Provide Chrome Web Store reviewers with a dedicated test Google account that has
 2. Open a supported browser meeting: Google Meet, Zoom Web, or Teams Web.
 3. Click the Evolvio icon and sign in with the supplied test account.
 4. Select **Only my voice** for microphone-only coaching, or explicitly select **Full meeting** to permit meeting-tab audio/context.
-5. Click **Start Coaching**. A private Evolvio overlay appears only in the reviewer’s meeting tab.
+5. Click **Start Coaching** and approve Chrome's microphone prompt. A private Evolvio overlay appears only in the reviewer’s meeting tab.
 6. Speak for a short period. Evolvio sends transcript audio to its backend and shows private coaching prompts when generated.
 7. Click **Stop Coaching** to pause capture, or **End Meeting** to create a post-meeting report.
 
@@ -113,8 +114,8 @@ Do not use screenshots that show real meeting participants, personal data, or tr
 
 ## 8. Pre-submit checklist
 
-- [ ] Upload the exact signed package `evolvio-extension-1.0.117.zip`.
-- [ ] Verify package manifest version is `1.0.117`.
+- [ ] Upload the exact package `evolvio-extension-1.0.122.zip`.
+- [ ] Verify package manifest version is `1.0.122`.
 - [ ] Verify the live backend URL in the manifest is current.
 - [ ] Publish and test the public privacy-policy URL.
 - [ ] Publish and test the support URL/email.
@@ -126,9 +127,8 @@ Do not use screenshots that show real meeting participants, personal data, or tr
 
 ## 9. Release notes
 
-**Version 1.0.117**
+**Version 1.0.122**
 
-- Routes transcript uploads and coaching-prompt polling to the migrated Evolvio API.
-- Adds permission for the current Evolvio API host.
-- Preserves existing user settings while updating a legacy backend URL.
-
+- Removes the invalid `audioCapture` manifest permission.
+- Requests microphone permission through Chrome's standard popup prompt after the user clicks **Start Coaching**.
+- Retains the locked listing name and description, the full-meeting capture choice, and the `tabs` permission in the single review-ready package.
