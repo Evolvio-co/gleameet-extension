@@ -2,7 +2,7 @@
 
 **Product:** Evolvio — AI Meeting Coach
 **Package version:** 1.0.124
-**Upload artifact:** `evolvio-extension-1.0.124.zip`
+**Upload artifact:** `store-release/evolvio-extension-store-1.0.124.zip`
 **Store:** Chrome Web Store (not Google Play)
 
 ## 1. Listing copy
@@ -114,8 +114,11 @@ Do not use screenshots that show real meeting participants, personal data, or tr
 
 ## 8. Pre-submit checklist
 
-- [ ] Upload the exact package `evolvio-extension-1.0.124.zip`.
+- [ ] Run `bash scripts/package-store.sh` from the repository root.
+- [ ] Upload the exact package `store-release/evolvio-extension-store-1.0.124.zip`.
 - [ ] Verify package manifest version is `1.0.124`.
+- [ ] Verify the upload manifest has no top-level `key` field and that `manifest.json` is at the ZIP root.
+- [ ] After Chrome assigns the Store extension ID, register that ID with the Google OAuth Chrome-extension client before enabling production sign-in.
 - [ ] Verify the live backend URL in the manifest is current.
 - [ ] Publish and test the public privacy-policy URL.
 - [ ] Publish and test the support URL/email.
