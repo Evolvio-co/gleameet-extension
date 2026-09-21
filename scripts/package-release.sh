@@ -9,13 +9,19 @@ version="$(node -p "require(process.argv[1]).version" "$manifest")"
 versioned_archive="$repo_root/evolvio-extension-$version.zip"
 latest_archive="$repo_root/evolvio-extension.zip"
 temporary_archive="$(mktemp "${TMPDIR:-/tmp}/evolvio-extension.XXXXXX.zip")"
+staging_directory="$(mktemp -d "${TMPDIR:-/tmp}/evolvio-extension.XXXXXX")"
 
-trap 'rm -f "$temporary_archive"' EXIT
+trap 'rm -f "$temporary_archive"; rm -rf "$staging_directory"' EXIT
 rm -f "$temporary_archive"
 
+# Keep the extension payload in a customer-friendly folder when the ZIP is
+# extracted. Chrome's "Load unpacked" action should target evolvio-extension,
+# not an implementation directory named "public".
+cp -R "$repo_root/public" "$staging_directory/evolvio-extension"
 (
-  cd "$repo_root"
-  zip -q -r "$temporary_archive" public -x 'public/.DS_Store' 'public/**/.DS_Store'
+  cd "$staging_directory"
+  zip -q -r "$temporary_archive" evolvio-extension \
+    -x 'evolvio-extension/.DS_Store' 'evolvio-extension/**/.DS_Store'
 )
 
 cp "$temporary_archive" "$versioned_archive"
