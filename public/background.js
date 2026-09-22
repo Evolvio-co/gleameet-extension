@@ -154,7 +154,8 @@ var state = {
 };
 var meetingTabCleanupTimer = null;
 var meetingCleanupInProgress = null;
-var lastAudioCaptureRestartAt = 0;
+var audioCaptureRecoveryTimers = /* @__PURE__ */ new Map();
+var audioCaptureRecoveryAttempts = /* @__PURE__ */ new Map();
 var FINAL_AUDIO_FLUSH_TIMEOUT_MS = 7e3;
 function resolveCaptureMode(value, fallback = DEFAULT_CAPTURE_MODE) {
   return value === "full_meeting" || value === "user_voice_only" ? value : fallback;
@@ -667,6 +668,9 @@ function handleStartAudioCapture(meetingSessionId, captureMode = state.captureMo
   });
 }
 async function stopOffscreenAudioCapture() {
+  for (const timer of audioCaptureRecoveryTimers.values()) clearTimeout(timer);
+  audioCaptureRecoveryTimers.clear();
+  audioCaptureRecoveryAttempts.clear();
   await Promise.allSettled([
     chrome.runtime.sendMessage({ type: "STOP_MIC_CAPTURE" }),
     chrome.runtime.sendMessage({ type: "STOP_TAB_CAPTURE" })
@@ -690,20 +694,46 @@ async function flushActiveAudioCapture(meetingSessionId) {
   ]);
   await new Promise((resolve) => setTimeout(resolve, 750));
 }
+function scheduleAudioCaptureRecovery(message) {
+  if (message.meetingSessionId !== state.meetingSessionId || state.status !== "active" || state.coachingPausedByUser || state.promptsMutedByUser) {
+    return { scheduled: false };
+  }
+  if (audioCaptureRecoveryTimers.has(message.stream)) return { scheduled: false };
+  const attempt = (audioCaptureRecoveryAttempts.get(message.stream) || 0) + 1;
+  const delayMs = Math.min(3e4, 1e3 * 2 ** Math.min(attempt - 1, 5));
+  audioCaptureRecoveryAttempts.set(message.stream, attempt);
+  bufferCaptureDiagnostic("audio_capture_retry_scheduled", {
+    stream: message.stream,
+    reason: message.reason || "unknown",
+    attempt,
+    delay_ms: delayMs
+  });
+  const timer = setTimeout(() => {
+    audioCaptureRecoveryTimers.delete(message.stream);
+    if (state.status !== "active" || state.meetingSessionId !== message.meetingSessionId || state.coachingPausedByUser || state.promptsMutedByUser) return;
+    handleStartAudioCapture(
+      message.meetingSessionId,
+      state.captureMode,
+      message.stream === "mic" && state.platform === "google_meet"
+    );
+  }, delayMs);
+  audioCaptureRecoveryTimers.set(message.stream, timer);
+  return { scheduled: true, attempt, delayMs };
+}
 function handleAudioCaptureStopped(message) {
   if (!message.meetingSessionId || message.meetingSessionId !== state.meetingSessionId || state.status !== "active" || state.coachingPausedByUser || state.promptsMutedByUser) {
     return { ok: true, ignored: true };
   }
-  const now = Date.now();
-  if (now - lastAudioCaptureRestartAt < 5e3) {
-    return { ok: true, ignored: true, reason: "restart-throttled" };
-  }
-  lastAudioCaptureRestartAt = now;
+  const stream = message.stream || "mic";
   console.warn(
-    `[Evolvio] ${message.stream || "audio"} capture stopped during active coaching; restarting (${message.reason || "unknown"})`
+    `[Evolvio] ${stream} capture stopped during active coaching; scheduling recovery (${message.reason || "unknown"})`
   );
-  handleStartAudioCapture(message.meetingSessionId, state.captureMode);
-  return { ok: true, restarted: true };
+  const recovery = scheduleAudioCaptureRecovery({
+    meetingSessionId: message.meetingSessionId,
+    stream,
+    reason: message.reason
+  });
+  return recovery.scheduled ? { ok: true, restarted: true, retryAttempt: recovery.attempt } : { ok: true, ignored: true, reason: "recovery-already-scheduled" };
 }
 function broadcastStatus(statusReason) {
   persistActiveCoachingSession();

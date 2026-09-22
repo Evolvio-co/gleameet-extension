@@ -286,11 +286,7 @@
     stream.getAudioTracks().forEach((track) => {
       track.addEventListener("ended", () => reportUnexpectedStop("track-ended"));
       track.addEventListener("mute", () => {
-        setTimeout(() => {
-          if (track.muted && recorder.state === "recording") {
-            reportUnexpectedStop("track-muted");
-          }
-        }, 3e4);
+        sendDiagnostic("offscreen_track_muted", { ready_state: track.readyState });
       });
     });
     const drainUploadQueue = async () => {

@@ -23588,7 +23588,7 @@
       "use strict";
       Object.defineProperty(exports, "__esModule", { value: true });
       exports.EVOLVIO_SCHEMA_VERSION = void 0;
-      exports.EVOLVIO_SCHEMA_VERSION = "evolvio.incremental.v1";
+      exports.EVOLVIO_SCHEMA_VERSION = "evolvio.inference.v1.3.8";
     }
   });
 
@@ -23639,12 +23639,12 @@
     "../shared/dist/constants.js"(exports) {
       "use strict";
       Object.defineProperty(exports, "__esModule", { value: true });
-      exports.LATENCY_TARGETS = exports.DEFAULT_RETENTION_DAYS = exports.RANKING_WEIGHTS = exports.PROMPT_LIMITS = exports.ROLLING_WINDOWS = exports.MAX_PROMPTS_PER_30_MIN = exports.EVOLVIO_STRUCTURED_RETENTION_DAYS = exports.EVOLVIO_PATTERN_THRESHOLDS = exports.EVOLVIO_INFERENCE_SCHEMA_VERSION = exports.EVOLVIO_PROMPT_TEMPLATE_VERSION = exports.EVOLVIO_PATTERN_THRESHOLD_VERSION = exports.EVOLVIO_RULE_REGISTRY_VERSION = exports.DEFAULT_CAPTURE_MODE = void 0;
+      exports.LATENCY_TARGETS = exports.DEFAULT_RETENTION_DAYS = exports.RANKING_WEIGHTS = exports.PROMPT_LIMITS = exports.ROLLING_WINDOWS = exports.MAX_LIVE_CUES_PER_MEETING = exports.MAX_PROMPTS_PER_30_MIN = exports.EVOLVIO_STRUCTURED_RETENTION_DAYS = exports.EVOLVIO_PATTERN_THRESHOLDS = exports.EVOLVIO_INFERENCE_SCHEMA_VERSION = exports.EVOLVIO_PROMPT_TEMPLATE_VERSION = exports.EVOLVIO_PATTERN_THRESHOLD_VERSION = exports.EVOLVIO_RULE_REGISTRY_VERSION = exports.DEFAULT_CAPTURE_MODE = void 0;
       exports.DEFAULT_CAPTURE_MODE = "user_voice_only";
       exports.EVOLVIO_RULE_REGISTRY_VERSION = "law-registry.v1";
-      exports.EVOLVIO_PATTERN_THRESHOLD_VERSION = "pattern-thresholds.test.v1";
-      exports.EVOLVIO_PROMPT_TEMPLATE_VERSION = "prompt-templates.v3";
-      exports.EVOLVIO_INFERENCE_SCHEMA_VERSION = "evolvio.incremental.v1";
+      exports.EVOLVIO_PATTERN_THRESHOLD_VERSION = "pattern-policy.v1.3.8.beta";
+      exports.EVOLVIO_PROMPT_TEMPLATE_VERSION = "live-cue-library.v1.3.8";
+      exports.EVOLVIO_INFERENCE_SCHEMA_VERSION = "evolvio.inference.v1.3.8";
       exports.EVOLVIO_PATTERN_THRESHOLDS = {
         MIN_SUPPORTING_OBSERVATIONS_FOR_CANDIDATE: 1,
         MIN_SUPPORTING_MEETINGS_FOR_EMERGING: 2,
@@ -23658,12 +23658,11 @@
         CORRECTIONS: 730
       };
       exports.MAX_PROMPTS_PER_30_MIN = {
-        "minimal": 15,
-        // Standard coaching is evaluated on each 30-second transcript window.
-        // The backend's 30-second global cooldown is the effective throttle.
-        "standard": 120,
-        "high-support": 120
+        "minimal": 2,
+        "standard": 3,
+        "high-support": 3
       };
+      exports.MAX_LIVE_CUES_PER_MEETING = 3;
       exports.ROLLING_WINDOWS = {
         SHORT: 30,
         MEDIUM: 90,
@@ -23671,8 +23670,7 @@
         // full meeting to date
       };
       exports.PROMPT_LIMITS = {
-        BODY_MAX_WORDS: 25,
-        // FR-058 (extended for richer nudges)
+        BODY_MAX_WORDS: 12,
         RATIONALE_MAX_WORDS: 10,
         // FR-059
         EXAMPLE_MAX_WORDS: 20
@@ -23720,11 +23718,11 @@
       exports.isBehaviorCode = isBehaviorCode;
       exports.behaviorCodeFitsLens = behaviorCodeFitsLens;
       exports.getEvolvioBehavior = getEvolvioBehavior;
-      exports.EVOLVIO_BEHAVIOR_REGISTRY_VERSION = "evolvio-behavior-registry.v1";
+      exports.EVOLVIO_BEHAVIOR_REGISTRY_VERSION = "evolvio-behavior-registry.v1.3.8";
       exports.EVOLVIO_BEHAVIOR_REGISTRY = {
         acknowledge_before_advocating: {
           behavior_code: "acknowledge_before_advocating",
-          lens: "collaboration",
+          lens: "attention",
           label: "Acknowledge before advocating",
           description: "Reflect another point before adding a recommendation, disagreement, or competing frame.",
           supported_capture_modes: ["full_meeting"],
@@ -23732,14 +23730,16 @@
           permitted_inferences: ["The contribution may be easier to receive when the other point is named first."],
           prohibited_inferences: ["people-pleasing", "dominance", "empathy score", "personality label", "intent"],
           disconfirming_features: ["acknowledgment_count", "summary_or_recap_count"],
-          safe_prompt_template: "Name their point first, then land yours.",
+          live_eligible: true,
+          cue_mode: "say",
+          safe_prompt_template: "I hear the concern; my view is\u2026",
           practice_cue: "When you are about to disagree or redirect",
           practice_behavior: "name the prior point in one sentence before adding yours",
           measure_metric: "At least one acknowledgment before advocacy in the next meeting"
         },
         ask_clarifying_question: {
           behavior_code: "ask_clarifying_question",
-          lens: "clarity",
+          lens: "communication",
           label: "Ask a clarifying question",
           description: "Use a concise question to clarify scope, assumptions, decision criteria, or next steps.",
           supported_capture_modes: ["user_voice_only", "full_meeting"],
@@ -23747,14 +23747,16 @@
           permitted_inferences: ["A question may improve shared understanding before a recommendation."],
           prohibited_inferences: ["curiosity trait", "intelligence", "engagement score", "motivation"],
           disconfirming_features: ["question_count", "clarifying_question_count"],
-          safe_prompt_template: "Ask one clean clarifying question.",
+          live_eligible: true,
+          cue_mode: "say",
+          safe_prompt_template: "What would make that clear?",
           practice_cue: "When the plan or recommendation feels underspecified",
           practice_behavior: "ask one question about scope, owner, or decision criteria",
           measure_metric: "One clarifying question before the recommendation"
         },
         make_next_step_specific: {
           behavior_code: "make_next_step_specific",
-          lens: "commitment",
+          lens: "boundaries",
           label: "Make the next step specific",
           description: "Close an idea with a clear owner, action, and timing cue.",
           supported_capture_modes: ["user_voice_only", "full_meeting"],
@@ -23762,14 +23764,16 @@
           permitted_inferences: ["Specific owner/date language may make follow-through easier to track."],
           prohibited_inferences: ["leadership potential", "performance rating", "executive readiness", "reliability trait"],
           disconfirming_features: ["owner_assignment_present", "deadline_present", "action_specificity_score"],
-          safe_prompt_template: "Ask who owns the next step and by when.",
+          live_eligible: true,
+          cue_mode: "say",
+          safe_prompt_template: "Who owns this by when?",
           practice_cue: "When a topic is about to close",
           practice_behavior: "name the owner and date for one next step",
           measure_metric: "One owner/date close in the next meeting"
         },
         balance_risk_and_upside: {
           behavior_code: "balance_risk_and_upside",
-          lens: "clarity",
+          lens: "communication",
           label: "Balance risk and upside",
           description: "Pair downside framing with an observable upside, option, or tradeoff.",
           supported_capture_modes: ["user_voice_only", "full_meeting"],
@@ -23777,14 +23781,16 @@
           permitted_inferences: ["A balanced frame may help others compare tradeoffs."],
           prohibited_inferences: ["risk preference", "anxiety", "pessimism", "bias label"],
           disconfirming_features: ["gain_frame_score", "option_count_presented"],
-          safe_prompt_template: "Name one upside or tradeoff too.",
+          live_eligible: true,
+          cue_mode: "say",
+          safe_prompt_template: "The upside is\u2026",
           practice_cue: "When you describe a risk",
           practice_behavior: "add one upside, option, or tradeoff in the same breath",
           measure_metric: "Risk statements paired with one upside or option"
         },
         ground_claim_with_example: {
           behavior_code: "ground_claim_with_example",
-          lens: "clarity",
+          lens: "communication",
           label: "Ground a claim with an example",
           description: "Support a recommendation with one concrete example, data point, or prior case.",
           supported_capture_modes: ["user_voice_only", "full_meeting"],
@@ -23792,14 +23798,16 @@
           permitted_inferences: ["A concrete example may make the recommendation easier to evaluate."],
           prohibited_inferences: ["expertise rating", "credibility score", "competence conclusion"],
           disconfirming_features: ["evidence_reference_present", "peer_example_present"],
-          safe_prompt_template: "Bring in one concrete example.",
+          live_eligible: true,
+          cue_mode: "say",
+          safe_prompt_template: "For example, we saw\u2026",
           practice_cue: "When you make a recommendation",
           practice_behavior: "attach one concrete example or data point",
           measure_metric: "One example attached to the main recommendation"
         },
         manage_response_timing: {
           behavior_code: "manage_response_timing",
-          lens: "composure",
+          lens: "attention",
           label: "Manage response timing",
           description: "Create a short beat before responding when the moment is fast or tense.",
           supported_capture_modes: ["full_meeting"],
@@ -23807,14 +23815,16 @@
           permitted_inferences: ["A short pause may create room for a more considered reply."],
           prohibited_inferences: ["impulsivity", "System 1 score", "emotional control", "temperament"],
           disconfirming_features: ["response_latency_seconds", "clarifying_question_count"],
-          safe_prompt_template: "Leave one beat before responding.",
+          live_eligible: true,
+          cue_mode: "pause",
+          safe_prompt_template: "What matters most here?",
           practice_cue: "When you feel ready to answer immediately",
           practice_behavior: "pause for one beat before speaking",
           measure_metric: "One deliberate pause before a response"
         },
         summarize_shared_understanding: {
           behavior_code: "summarize_shared_understanding",
-          lens: "collaboration",
+          lens: "attention",
           label: "Summarize shared understanding",
           description: "Briefly recap what has been decided, heard, or agreed before moving forward.",
           supported_capture_modes: ["user_voice_only", "full_meeting"],
@@ -23822,14 +23832,16 @@
           permitted_inferences: ["A recap may make alignment easier to inspect."],
           prohibited_inferences: ["team psychological safety", "facilitation score", "leadership potential"],
           disconfirming_features: ["summary_or_recap_count"],
-          safe_prompt_template: "Recap your point in one sentence.",
+          live_eligible: true,
+          cue_mode: "say",
+          safe_prompt_template: "So we agree that\u2026",
           practice_cue: "When the discussion shifts topics",
           practice_behavior: "recap your point in one sentence",
           measure_metric: "One concise recap before topic shift"
         },
         invite_other_perspective: {
           behavior_code: "invite_other_perspective",
-          lens: "collaboration",
+          lens: "attention",
           label: "Invite another perspective",
           description: "Create a small opening for another view without requiring disclosure or agreement.",
           supported_capture_modes: ["full_meeting"],
@@ -23837,13 +23849,100 @@
           permitted_inferences: ["A small invitation may make it easier for others to contribute."],
           prohibited_inferences: ["dominance", "manipulation", "team engagement", "peer reaction"],
           disconfirming_features: ["question_count", "turn_count"],
-          safe_prompt_template: "Invite one other perspective.",
+          live_eligible: true,
+          cue_mode: "say",
+          safe_prompt_template: "What is your view?",
           practice_cue: "When you have spoken for a while",
           practice_behavior: "ask for one other view before continuing",
           measure_metric: "One explicit invitation for another perspective"
+        },
+        added_work_scope_unresolved: {
+          behavior_code: "added_work_scope_unresolved",
+          lens: "boundaries",
+          label: "Clarify added work against scope",
+          description: "When a new work item is accepted, clarify whether it adds to, replaces, or changes an existing deliverable.",
+          supported_capture_modes: ["user_voice_only", "full_meeting"],
+          evidence_quality_minimum: "direct_user_signal",
+          permitted_inferences: ["The relationship between work items may need to be made explicit."],
+          prohibited_inferences: ["scope creep blame", "commercial intent", "relationship health", "motivation"],
+          disconfirming_features: ["scope_relation_clarified"],
+          live_eligible: true,
+          cue_mode: "say",
+          safe_prompt_template: "Is this additional, or replacing something?",
+          practice_cue: "When new work is accepted",
+          practice_behavior: "state how the new item relates to the existing deliverable",
+          measure_metric: "One explicit scope relationship before accepting added work"
+        },
+        buried_recommendation: {
+          behavior_code: "buried_recommendation",
+          lens: "communication",
+          label: "Lead with the recommendation",
+          description: "State the recommendation before supporting detail when a decision is being advanced.",
+          supported_capture_modes: ["user_voice_only", "full_meeting"],
+          evidence_quality_minimum: "direct_user_signal",
+          permitted_inferences: ["A recommendation may be easier to inspect when stated before its supporting detail."],
+          prohibited_inferences: ["executive presence score", "confidence trait", "communication style label"],
+          disconfirming_features: ["recommendation_present"],
+          live_eligible: true,
+          cue_mode: "say",
+          safe_prompt_template: "My recommendation is\u2026",
+          practice_cue: "When you are making a recommendation",
+          practice_behavior: "state the recommendation in the first sentence",
+          measure_metric: "One recommendation stated before supporting detail"
+        },
+        reporting_without_advising: {
+          behavior_code: "reporting_without_advising",
+          lens: "visibility",
+          label: "Turn reporting into advice",
+          description: "Pair a status or activity update with a clear implication, recommendation, or decision request.",
+          supported_capture_modes: ["user_voice_only", "full_meeting"],
+          evidence_quality_minimum: "direct_user_signal",
+          permitted_inferences: ["A status update may be more actionable when its implication is named."],
+          prohibited_inferences: ["commercial skill", "strategic ability", "career readiness"],
+          disconfirming_features: ["strategic_recommendation_present"],
+          live_eligible: true,
+          cue_mode: "say",
+          safe_prompt_template: "My recommendation is\u2026",
+          practice_cue: "After a status update",
+          practice_behavior: "name the implication or recommendation",
+          measure_metric: "One status update paired with a recommendation"
+        },
+        monologue_no_discovery: {
+          behavior_code: "monologue_no_discovery",
+          lens: "attention",
+          label: "Create room for discovery",
+          description: "After an extended contribution, ask one open question before continuing.",
+          supported_capture_modes: ["full_meeting"],
+          evidence_quality_minimum: "user_transcript_or_timing",
+          permitted_inferences: ["An open question may create room for information before continuing the point."],
+          prohibited_inferences: ["dominance", "listening score", "other participant engagement", "intent"],
+          disconfirming_features: ["open_discovery_question_count", "turn_count"],
+          live_eligible: true,
+          cue_mode: "say",
+          safe_prompt_template: "What is your take?",
+          practice_cue: "After you have spoken for a while",
+          practice_behavior: "ask one open question before adding another point",
+          measure_metric: "One open discovery question after an extended contribution"
+        },
+        premature_concession: {
+          behavior_code: "premature_concession",
+          lens: "boundaries",
+          label: "Clarify before conceding",
+          description: "Clarify the concern, tradeoff, or condition before offering a price or scope concession.",
+          supported_capture_modes: ["user_voice_only", "full_meeting"],
+          evidence_quality_minimum: "direct_user_signal",
+          permitted_inferences: ["Clarifying the condition first may make a concession easier to evaluate."],
+          prohibited_inferences: ["negotiation ability", "confidence trait", "commercial intent"],
+          disconfirming_features: ["concession_diagnosis_question_count"],
+          live_eligible: true,
+          cue_mode: "say",
+          safe_prompt_template: "What concern should we solve first?",
+          practice_cue: "Before offering a concession",
+          practice_behavior: "ask one question about the condition or tradeoff",
+          measure_metric: "One clarifying question before a concession"
         }
       };
-      exports.EVOLVIO_MEETING_LENSES = ["clarity", "collaboration", "commitment", "composure"];
+      exports.EVOLVIO_MEETING_LENSES = ["communication", "attention", "boundaries", "visibility"];
       exports.EVOLVIO_BEHAVIOR_CODES = Object.keys(exports.EVOLVIO_BEHAVIOR_REGISTRY);
       function isMeetingLens(value) {
         return exports.EVOLVIO_MEETING_LENSES.includes(value);
