@@ -157,8 +157,20 @@ var meetingCleanupInProgress = null;
 var audioCaptureRecoveryTimers = /* @__PURE__ */ new Map();
 var audioCaptureRecoveryAttempts = /* @__PURE__ */ new Map();
 var FINAL_AUDIO_FLUSH_TIMEOUT_MS = 7e3;
+var CAPTURE_LIVENESS_ALARM = "evolvio-capture-liveness";
+var CAPTURE_LIVENESS_PERIOD_MINUTES = 0.5;
 function resolveCaptureMode(value, fallback = DEFAULT_CAPTURE_MODE) {
   return value === "full_meeting" || value === "user_voice_only" ? value : fallback;
+}
+function setCaptureLivenessAlarm(active) {
+  if (active) {
+    chrome.alarms.create(CAPTURE_LIVENESS_ALARM, {
+      delayInMinutes: CAPTURE_LIVENESS_PERIOD_MINUTES,
+      periodInMinutes: CAPTURE_LIVENESS_PERIOD_MINUTES
+    });
+    return;
+  }
+  void chrome.alarms.clear(CAPTURE_LIVENESS_ALARM);
 }
 var authStateReady = new Promise((resolve) => {
   chrome.storage.local.get(["sessionToken", "userId", "activeCoachingSession", "lastMeetingContext"], (data) => {
@@ -197,6 +209,10 @@ var authStateReady = new Promise((resolve) => {
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   handleMessage(message, sender).then(sendResponse).catch((err) => sendResponse({ error: err.message }));
   return true;
+});
+chrome.alarms.onAlarm.addListener((alarm) => {
+  if (alarm.name !== CAPTURE_LIVENESS_ALARM) return;
+  void runCaptureLivenessCheck();
 });
 chrome.tabs.onRemoved.addListener((tabId) => {
   if (tabId !== state.meetingTabId) return;
@@ -393,6 +409,7 @@ async function handleStartCoaching(message) {
     const request = {
       platform,
       meeting_label: message.meetingLabel || null,
+      customer_mode_id: typeof message.customerModeId === "string" ? message.customerModeId : void 0,
       extension_version: chrome.runtime.getManifest().version,
       consent: message.consent
     };
@@ -438,6 +455,7 @@ async function handlePauseCoaching() {
       clearInterval(state.pollingInterval);
       state.pollingInterval = null;
     }
+    setCaptureLivenessAlarm(false);
     const context = await getPreferredMeetingContext();
     if (context?.meetingDetected) {
       state.meetingDetected = true;
@@ -760,6 +778,7 @@ function stopLocalCoachingSession(options) {
     clearInterval(state.pollingInterval);
     state.pollingInterval = null;
   }
+  setCaptureLivenessAlarm(false);
   void sendMessageToMeetingTabs({
     type: "COACHING_ENDED",
     meetingSessionId: endedSessionId,
@@ -921,6 +940,7 @@ async function cleanupActiveMeetingSession(reason) {
       clearInterval(state.pollingInterval);
       state.pollingInterval = null;
     }
+    setCaptureLivenessAlarm(false);
     state.meetingDetected = false;
     state.meetingSessionId = null;
     state.meetingTabId = null;
@@ -1068,6 +1088,29 @@ function startSessionIntervals() {
   state.batchInterval = setInterval(flushEventBuffer, 3e3);
   state.pollingInterval = setInterval(pollForPrompts, 2e3);
   void pollForPrompts();
+  setCaptureLivenessAlarm(true);
+}
+async function runCaptureLivenessCheck() {
+  await authStateReady;
+  await restoreActiveCoachingSessionSnapshot();
+  if (!state.meetingSessionId || state.status !== "active" && state.status !== "muted" || state.coachingPausedByUser) {
+    setCaptureLivenessAlarm(false);
+    return;
+  }
+  await refreshMeetingContextFromTabs();
+  if (!state.meetingDetected || !state.meetingSessionId) return;
+  bufferCaptureDiagnostic("capture_liveness_probe", {
+    capture_mode: state.captureMode,
+    platform: state.platform
+  });
+  await sendMessageToMeetingTabs({
+    type: "ENSURE_AUDIO_CAPTURE",
+    meetingSessionId: state.meetingSessionId
+  }).catch(() => {
+  });
+  if (state.captureMode !== "user_voice_only") {
+    handleStartAudioCapture(state.meetingSessionId, state.captureMode);
+  }
 }
 function getPreferredMeetingTab(callback) {
   getPreferredMeetingTabAsync().then(callback);

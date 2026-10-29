@@ -2,10 +2,10 @@
 (() => {
   // src/offscreen.ts
   var micRecorder = null;
-  var micInterval = null;
+  var micCapture = null;
   var micSessionId = null;
   var tabRecorder = null;
-  var tabInterval = null;
+  var tabCapture = null;
   var tabAudioCtx = null;
   var tabCaptureStream = null;
   var tabSessionId = null;
@@ -16,6 +16,7 @@
   var TRANSCRIPTION_REQUEST_TIMEOUT_MS = 3e4;
   var TRANSCRIPTION_UPLOAD_ATTEMPTS = 4;
   var TRANSCRIPTION_CADENCE_MS = 3e4;
+  var REQUESTED_CHUNK_TIMEOUT_MS = 1e4;
   var MAX_QUEUED_TRANSCRIPTION_CHUNKS = 120;
   function sleep(ms) {
     return new Promise((resolve) => setTimeout(resolve, ms));
@@ -54,7 +55,7 @@
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     if (message.type === "START_MIC_CAPTURE") {
       const { meetingSessionId, sessionToken, apiBase } = message;
-      if (micRecorder && micSessionId === meetingSessionId && isRecorderHealthy(micRecorder)) {
+      if (micCapture && micSessionId === meetingSessionId && micCapture.recorder && isRecorderHealthy(micCapture.recorder)) {
         return;
       }
       stopMicCapture();
@@ -78,9 +79,9 @@
           });
           return;
         }
-        const { recorder, interval } = startRecording(stream, "mic", meetingSessionId, sessionToken, apiBase);
-        micRecorder = recorder;
-        micInterval = interval;
+        micCapture = startRecording(stream, "mic", meetingSessionId, sessionToken, apiBase, (recorder) => {
+          micRecorder = recorder;
+        });
         micSessionId = meetingSessionId;
         console.log("[Evolvio Offscreen] Mic capture started");
       }).catch((err) => {
@@ -97,7 +98,7 @@
     }
     if (message.type === "START_TAB_CAPTURE") {
       const { meetingSessionId, sessionToken, apiBase, streamId } = message;
-      if (tabRecorder && tabSessionId === meetingSessionId && isRecorderHealthy(tabRecorder)) {
+      if (tabCapture && tabSessionId === meetingSessionId && tabCapture.recorder && isRecorderHealthy(tabCapture.recorder)) {
         return;
       }
       stopTabCapture();
@@ -127,9 +128,9 @@
         source.connect(audioCtx.destination);
         const dest = audioCtx.createMediaStreamDestination();
         source.connect(dest);
-        const { recorder, interval } = startRecording(dest.stream, "tab", meetingSessionId, sessionToken, apiBase);
-        tabRecorder = recorder;
-        tabInterval = interval;
+        tabCapture = startRecording(dest.stream, "tab", meetingSessionId, sessionToken, apiBase, (recorder) => {
+          tabRecorder = recorder;
+        });
         tabSessionId = meetingSessionId;
         console.log("[Evolvio Offscreen] Tab audio split: speakers + recorder both active");
       }).catch((err) => {
@@ -154,8 +155,8 @@
     }
     if (message.type === "FLUSH_AUDIO_CAPTURE") {
       Promise.all([
-        flushRecorder(micRecorder, 6e3),
-        flushRecorder(tabRecorder, 6e3)
+        micCapture?.flush(6e3) ?? Promise.resolve(),
+        tabCapture?.flush(6e3) ?? Promise.resolve()
       ]).then(() => sendResponse({ ok: true })).catch((err) => sendResponse({ ok: false, error: err?.message || String(err) }));
       return true;
     }
@@ -193,40 +194,16 @@
   }
   function stopMicCapture() {
     micStartToken++;
-    if (micInterval) {
-      clearInterval(micInterval);
-      micInterval = null;
-    }
-    if (micRecorder) {
-      expectedRecorderStops.add(micRecorder);
-      if (micRecorder.state === "recording") {
-        try {
-          micRecorder.stop();
-        } catch (_) {
-        }
-      }
-      micRecorder.stream.getTracks().forEach((t) => t.stop());
-      micRecorder = null;
-    }
+    micCapture?.stop();
+    micCapture = null;
+    micRecorder = null;
     micSessionId = null;
   }
   function stopTabCapture() {
     tabStartToken++;
-    if (tabInterval) {
-      clearInterval(tabInterval);
-      tabInterval = null;
-    }
-    if (tabRecorder) {
-      expectedRecorderStops.add(tabRecorder);
-      if (tabRecorder.state === "recording") {
-        try {
-          tabRecorder.stop();
-        } catch (_) {
-        }
-      }
-      tabRecorder.stream.getTracks().forEach((t) => t.stop());
-      tabRecorder = null;
-    }
+    tabCapture?.stop();
+    tabCapture = null;
+    tabRecorder = null;
     if (tabAudioCtx) {
       tabAudioCtx.close().catch(() => {
       });
@@ -238,13 +215,15 @@
     }
     tabSessionId = null;
   }
-  function startRecording(stream, streamType, meetingSessionId, sessionToken, apiBase) {
-    const recorder = new MediaRecorder(stream, { mimeType: "audio/webm" });
+  function startRecording(stream, streamType, meetingSessionId, sessionToken, apiBase, onRecorderChanged) {
+    let recorder = null;
     let chunkStartedAt = Date.now();
     let stopReported = false;
-    let interval = null;
-    let consecutiveUploadFailures = 0;
-    let lastDataAvailableAt = Date.now();
+    let stopped = false;
+    let healthInterval = null;
+    let rotationTimer = null;
+    let rotationDeadlineTimer = null;
+    let rotatingRecorder = null;
     const uploadQueue = [];
     let uploadInFlight = false;
     const sendDiagnostic = (reason, detail = {}) => {
@@ -256,13 +235,18 @@
       }).catch(() => {
       });
     };
+    const clearRotationTimers = () => {
+      if (rotationTimer) clearTimeout(rotationTimer);
+      if (rotationDeadlineTimer) clearTimeout(rotationDeadlineTimer);
+      rotationTimer = null;
+      rotationDeadlineTimer = null;
+    };
     const reportUnexpectedStop = (reason) => {
-      if (stopReported || expectedRecorderStops.has(recorder)) return;
+      if (stopped || stopReported) return;
       stopReported = true;
-      if (interval) {
-        clearInterval(interval);
-        interval = null;
-      }
+      clearRotationTimers();
+      if (healthInterval) clearInterval(healthInterval);
+      healthInterval = null;
       chrome.runtime.sendMessage({
         type: "AUDIO_CAPTURE_STOPPED",
         stream: streamType,
@@ -270,9 +254,13 @@
         reason
       }).catch(() => {
       });
-      try {
-        if (recorder.state === "recording") recorder.stop();
-      } catch (_) {
+      const active = recorder;
+      if (active) {
+        expectedRecorderStops.add(active);
+        try {
+          if (active.state === "recording") active.stop();
+        } catch (_) {
+        }
       }
       stream.getTracks().forEach((track) => {
         try {
@@ -280,9 +268,9 @@
         } catch (_) {
         }
       });
+      recorder = null;
+      onRecorderChanged(null);
     };
-    recorder.onerror = () => reportUnexpectedStop("recorder-error");
-    recorder.onstop = () => reportUnexpectedStop("recorder-stopped");
     stream.getAudioTracks().forEach((track) => {
       track.addEventListener("ended", () => reportUnexpectedStop("track-ended"));
       track.addEventListener("mute", () => {
@@ -299,7 +287,6 @@
           try {
             result = await transcribeChunkWithRetry(apiBase, sessionToken, chunk.blob, streamType, meetingSessionId);
           } catch (err) {
-            consecutiveUploadFailures++;
             sendDiagnostic("offscreen_chunk_upload_exhausted", {
               queue_depth: uploadQueue.length,
               message: err?.message || String(err)
@@ -308,7 +295,6 @@
             continue;
           }
           uploadQueue.shift();
-          consecutiveUploadFailures = 0;
           if (!result?.text) {
             sendDiagnostic("offscreen_chunk_empty", { queue_depth: uploadQueue.length });
             continue;
@@ -328,9 +314,8 @@
         if (uploadQueue.length > 0) void drainUploadQueue();
       }
     };
-    recorder.ondataavailable = async (e) => {
+    const enqueueChunk = async (activeRecorder, e) => {
       try {
-        lastDataAvailableAt = Date.now();
         if (!e.data || e.data.size < 1e3) {
           sendDiagnostic("offscreen_chunk_too_small", { size: e.data?.size || 0 });
           return;
@@ -351,21 +336,97 @@
         uploadQueue.push({ blob: e.data, startOffsetMs: chunkStart, endOffsetMs: chunkEndedAt });
         void drainUploadQueue();
       } finally {
-        settleFlushes(recorder);
+        settleFlushes(activeRecorder);
       }
     };
-    recorder.start(TRANSCRIPTION_CADENCE_MS);
-    interval = setInterval(() => {
+    const startNextWindow = () => {
+      if (stopped || !stream.active || !stream.getAudioTracks().some((track) => track.readyState === "live")) {
+        if (!stopped) reportUnexpectedStop("stream-not-live-before-window");
+        return;
+      }
+      const nextRecorder = new MediaRecorder(stream, { mimeType: "audio/webm" });
+      recorder = nextRecorder;
+      onRecorderChanged(nextRecorder);
+      chunkStartedAt = Date.now();
+      rotatingRecorder = null;
+      nextRecorder.ondataavailable = (event) => {
+        void enqueueChunk(nextRecorder, event);
+      };
+      nextRecorder.onerror = () => {
+        if (recorder === nextRecorder) reportUnexpectedStop("recorder-error");
+      };
+      nextRecorder.onstop = () => {
+        settleFlushes(nextRecorder);
+        if (stopped || expectedRecorderStops.has(nextRecorder)) return;
+        if (rotatingRecorder === nextRecorder && recorder === nextRecorder) {
+          clearRotationTimers();
+          startNextWindow();
+          return;
+        }
+        if (recorder === nextRecorder) reportUnexpectedStop("recorder-stopped");
+      };
+      try {
+        nextRecorder.start();
+        sendDiagnostic("offscreen_window_started");
+      } catch (_) {
+        reportUnexpectedStop("recorder-start-failed");
+        return;
+      }
+      rotationTimer = setTimeout(() => {
+        if (stopped || recorder !== nextRecorder || nextRecorder.state !== "recording") return;
+        rotatingRecorder = nextRecorder;
+        rotationDeadlineTimer = setTimeout(() => {
+          if (!stopped && recorder === nextRecorder && rotatingRecorder === nextRecorder) {
+            reportUnexpectedStop("window-stop-not-delivered");
+          }
+        }, REQUESTED_CHUNK_TIMEOUT_MS);
+        try {
+          nextRecorder.stop();
+          sendDiagnostic("offscreen_window_rotation_requested");
+        } catch (_) {
+          reportUnexpectedStop("window-stop-failed");
+        }
+      }, TRANSCRIPTION_CADENCE_MS);
+    };
+    healthInterval = setInterval(() => {
+      const active = recorder;
+      if (stopped) return;
       const liveAudioTrack = stream.getAudioTracks().some((track) => track.readyState === "live");
-      if (recorder.state !== "recording" || !stream.active || !liveAudioTrack) {
+      if (!active || active.state !== "recording" || !stream.active || !liveAudioTrack) {
+        if (rotatingRecorder === active) return;
         reportUnexpectedStop("health-check-failed");
-        return;
       }
-      if (Date.now() - lastDataAvailableAt > 12e4) {
-        reportUnexpectedStop("no-audio-chunks");
-        return;
+    }, 5e3);
+    startNextWindow();
+    return {
+      get recorder() {
+        return recorder;
+      },
+      flush(timeoutMs) {
+        return flushRecorder(recorder, timeoutMs);
+      },
+      stop() {
+        stopped = true;
+        clearRotationTimers();
+        if (healthInterval) clearInterval(healthInterval);
+        healthInterval = null;
+        const active = recorder;
+        recorder = null;
+        onRecorderChanged(null);
+        if (active) {
+          expectedRecorderStops.add(active);
+          try {
+            if (active.state === "recording") active.stop();
+          } catch (_) {
+          }
+        }
+        stream.getTracks().forEach((track) => {
+          try {
+            track.stop();
+          } catch (_) {
+          }
+        });
       }
-    }, 15e3);
-    return { recorder, interval };
+    };
   }
 })();

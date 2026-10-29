@@ -23588,7 +23588,7 @@
       "use strict";
       Object.defineProperty(exports, "__esModule", { value: true });
       exports.EVOLVIO_SCHEMA_VERSION = void 0;
-      exports.EVOLVIO_SCHEMA_VERSION = "evolvio.inference.v1.3.8";
+      exports.EVOLVIO_SCHEMA_VERSION = "evolvio.inference.v1.5";
     }
   });
 
@@ -23642,9 +23642,9 @@
       exports.LATENCY_TARGETS = exports.DEFAULT_RETENTION_DAYS = exports.RANKING_WEIGHTS = exports.PROMPT_LIMITS = exports.ROLLING_WINDOWS = exports.MAX_LIVE_CUES_PER_MEETING = exports.MAX_PROMPTS_PER_30_MIN = exports.EVOLVIO_STRUCTURED_RETENTION_DAYS = exports.EVOLVIO_PATTERN_THRESHOLDS = exports.EVOLVIO_INFERENCE_SCHEMA_VERSION = exports.EVOLVIO_PROMPT_TEMPLATE_VERSION = exports.EVOLVIO_PATTERN_THRESHOLD_VERSION = exports.EVOLVIO_RULE_REGISTRY_VERSION = exports.DEFAULT_CAPTURE_MODE = void 0;
       exports.DEFAULT_CAPTURE_MODE = "user_voice_only";
       exports.EVOLVIO_RULE_REGISTRY_VERSION = "law-registry.v1";
-      exports.EVOLVIO_PATTERN_THRESHOLD_VERSION = "pattern-policy.v1.3.8.beta";
-      exports.EVOLVIO_PROMPT_TEMPLATE_VERSION = "live-cue-library.v1.3.8";
-      exports.EVOLVIO_INFERENCE_SCHEMA_VERSION = "evolvio.inference.v1.3.8";
+      exports.EVOLVIO_PATTERN_THRESHOLD_VERSION = "pattern-policy.v1.5";
+      exports.EVOLVIO_PROMPT_TEMPLATE_VERSION = "customer-mode-framework.v2.0";
+      exports.EVOLVIO_INFERENCE_SCHEMA_VERSION = "evolvio.inference.v2.0";
       exports.EVOLVIO_PATTERN_THRESHOLDS = {
         MIN_SUPPORTING_OBSERVATIONS_FOR_CANDIDATE: 1,
         MIN_SUPPORTING_MEETINGS_FOR_EMERGING: 2,
@@ -23659,10 +23659,10 @@
       };
       exports.MAX_PROMPTS_PER_30_MIN = {
         "minimal": 2,
-        "standard": 3,
-        "high-support": 3
+        "standard": 6,
+        "high-support": 8
       };
-      exports.MAX_LIVE_CUES_PER_MEETING = 3;
+      exports.MAX_LIVE_CUES_PER_MEETING = 8;
       exports.ROLLING_WINDOWS = {
         SHORT: 30,
         MEDIUM: 90,
@@ -23718,7 +23718,7 @@
       exports.isBehaviorCode = isBehaviorCode;
       exports.behaviorCodeFitsLens = behaviorCodeFitsLens;
       exports.getEvolvioBehavior = getEvolvioBehavior;
-      exports.EVOLVIO_BEHAVIOR_REGISTRY_VERSION = "evolvio-behavior-registry.v1.3.8";
+      exports.EVOLVIO_BEHAVIOR_REGISTRY_VERSION = "evolvio-behavior-registry.v1.5";
       exports.EVOLVIO_BEHAVIOR_REGISTRY = {
         acknowledge_before_advocating: {
           behavior_code: "acknowledge_before_advocating",
@@ -25048,6 +25048,12 @@
   // src/popup/Popup.tsx
   var import_shared = __toESM(require_dist());
   var import_jsx_runtime = __toESM(require_jsx_runtime());
+  var DEFAULT_CUSTOMER_MODE = "general_v1";
+  var CUSTOMER_MODE_OPTIONS = [
+    { id: "general_v1", label: "General", description: "Balanced coaching for everyday meetings." },
+    { id: "fractional_consultant_v1", label: "Fractional consultant", description: "Emphasizes client alignment, scope, and recommendations." },
+    { id: "executive_v1", label: "Executive", description: "Emphasizes decisions, ownership, and clear commitments." }
+  ];
   var MEETING_NEGATIVE_GRACE_MS = 3e4;
   var lastPositiveMeetingAt = 0;
   var userRequestedEndAt = 0;
@@ -25214,6 +25220,7 @@
     const [error, setError] = (0, import_react.useState)(null);
     const [deletingId, setDeletingId] = (0, import_react.useState)(null);
     const [captureMode, setCaptureMode] = (0, import_react.useState)(import_shared.DEFAULT_CAPTURE_MODE);
+    const [customerModeId, setCustomerModeId] = (0, import_react.useState)(DEFAULT_CUSTOMER_MODE);
     const [allowFullMeetingCapture, setAllowFullMeetingCapture] = (0, import_react.useState)(true);
     const [goals, setGoals] = (0, import_react.useState)([]);
     const [activeGoal, setActiveGoal] = (0, import_react.useState)(null);
@@ -25275,6 +25282,13 @@
           setCaptureMode(items.captureMode);
         } else {
           setCaptureMode(import_shared.DEFAULT_CAPTURE_MODE);
+        }
+      });
+      chrome.storage.sync.get({ customerModeId: DEFAULT_CUSTOMER_MODE }, (items) => {
+        if (CUSTOMER_MODE_OPTIONS.some((mode) => mode.id === items.customerModeId)) {
+          setCustomerModeId(items.customerModeId);
+        } else {
+          setCustomerModeId(DEFAULT_CUSTOMER_MODE);
         }
       });
       getAppConfig().then((config) => {
@@ -25357,6 +25371,10 @@
       setCaptureMode(resolvedMode);
       chrome.storage.sync.set({ captureMode: resolvedMode });
     };
+    const handleCustomerModeChange = (mode) => {
+      setCustomerModeId(mode);
+      chrome.storage.sync.set({ customerModeId: mode });
+    };
     const handleCreateGoal = async () => {
       const text = goalText.trim();
       if (!text) return;
@@ -25395,6 +25413,7 @@
         type: "START_COACHING",
         platform: state.platform,
         captureMode: resolvedCaptureMode,
+        customerModeId,
         consent: {
           consent_version: "1.0",
           scope: {
@@ -26013,6 +26032,20 @@
             ] })
           ] }),
           captureMode === "full_meeting" && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "capture-mode-note", children: "Full-meeting mode may capture tab audio from other participants for context." })
+        ] }),
+        state.authenticated && state.status !== "active" && state.status !== "muted" && !state.meetingSessionId && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "capture-mode", "aria-label": "Coaching context", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("label", { className: "capture-mode-title", htmlFor: "customer-mode", children: "Coaching context" }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+            "select",
+            {
+              id: "customer-mode",
+              className: "coaching-context-select",
+              value: customerModeId,
+              onChange: (event) => handleCustomerModeChange(event.target.value),
+              children: CUSTOMER_MODE_OPTIONS.map((mode) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: mode.id, children: mode.label }, mode.id))
+            }
+          ),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "capture-mode-note", children: CUSTOMER_MODE_OPTIONS.find((mode) => mode.id === customerModeId)?.description })
         ] }),
         !state.authenticated ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "btn btn-primary", onClick: handleSignIn, children: "Sign In" }) : /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [
           state.status === "ready" && state.meetingSessionId && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [

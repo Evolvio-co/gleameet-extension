@@ -551,6 +551,11 @@
   }
   var pageMicRecorder = null;
   var pageMicInterval = null;
+  var pageMicRotationTimer = null;
+  var pageMicRotationDeadlineTimer = null;
+  var pageMicRotatingRecorder = null;
+  var pageMicStream = null;
+  var expectedPageMicStops = /* @__PURE__ */ new WeakSet();
   var pageMicSessionId = null;
   var pageMicChunkStartedAt = 0;
   var expectedPageMicStop = false;
@@ -565,10 +570,12 @@
   var pageMicRecoveryAttempt = 0;
   var pageMicStartInFlight = false;
   var PAGE_MIC_TRANSCRIPTION_CADENCE_MS = 3e4;
+  var PAGE_MIC_REQUESTED_CHUNK_TIMEOUT_MS = 1e4;
   var PAGE_MIC_MAX_QUEUED_CHUNKS = 120;
   var PAGE_MIC_UPLOAD_ATTEMPTS = 4;
   var pageMicUploadQueue = [];
   var pageMicUploadInFlight = false;
+  var pageMicRequestedChunkAt = 0;
   function delay(ms) {
     return new Promise((resolve) => setTimeout(resolve, ms));
   }
@@ -650,6 +657,7 @@
     pageMicConsecutiveUploadFailures = 0;
     pageMicConsecutiveEmptyTranscripts = 0;
     pageMicConsecutiveTinyChunks = 0;
+    pageMicRequestedChunkAt = 0;
   }
   function stopPageMicrophoneCapture(options = {}) {
     if (!options.preserveRecovery && pageMicRecoveryTimer) {
@@ -661,8 +669,18 @@
       clearInterval(pageMicInterval);
       pageMicInterval = null;
     }
+    if (pageMicRotationTimer) {
+      clearTimeout(pageMicRotationTimer);
+      pageMicRotationTimer = null;
+    }
+    if (pageMicRotationDeadlineTimer) {
+      clearTimeout(pageMicRotationDeadlineTimer);
+      pageMicRotationDeadlineTimer = null;
+    }
+    pageMicRotatingRecorder = null;
     if (pageMicRecorder) {
       expectedPageMicStop = options.expected ?? true;
+      expectedPageMicStops.add(pageMicRecorder);
       try {
         if (pageMicRecorder.state === "recording") pageMicRecorder.stop();
       } catch (_) {
@@ -674,6 +692,7 @@
         }
       });
     }
+    pageMicStream = null;
     pageMicRecorder = null;
     pageMicSessionId = null;
     pageMicChunkStartedAt = 0;
@@ -723,114 +742,144 @@
     stopPageMicrophoneCapture({ expected: true, preserveRecovery: true });
     schedulePageMicrophoneCaptureRecovery(reason, meetingSessionId);
   }
-  async function startPageMicrophoneCapture() {
-    if (!state.meetingSessionId) return;
-    if (pageMicRecorder && pageMicSessionId === state.meetingSessionId && pageMicRecorder.state === "recording") {
+  function ensurePageMicrophoneCapture(meetingSessionId) {
+    if (!shouldCapturePageMicrophone(meetingSessionId)) return;
+    const recorder = pageMicRecorder;
+    const healthy = !!recorder && pageMicSessionId === meetingSessionId && recorder.state === "recording" && recorder.stream.active && recorder.stream.getAudioTracks().some((track) => track.readyState === "live");
+    if (!healthy) {
+      sendCaptureDiagnostic("page_mic_liveness_recovery", { reason: "recorder-not-healthy" });
+      restartPageMicrophoneCapture("liveness-recorder-not-healthy", meetingSessionId);
       return;
     }
+    const now = Date.now();
+    if (pageMicRotatingRecorder !== recorder && now - lastPageMicDataAvailableAt > PAGE_MIC_TRANSCRIPTION_CADENCE_MS + PAGE_MIC_REQUESTED_CHUNK_TIMEOUT_MS) {
+      sendCaptureDiagnostic("page_mic_liveness_recovery", {
+        reason: "window-data-not-delivered",
+        silent_for_ms: now - lastPageMicDataAvailableAt
+      });
+      restartPageMicrophoneCapture("liveness-window-data-not-delivered", meetingSessionId);
+    }
+  }
+  function clearPageMicRotationTimers() {
+    if (pageMicRotationTimer) clearTimeout(pageMicRotationTimer);
+    if (pageMicRotationDeadlineTimer) clearTimeout(pageMicRotationDeadlineTimer);
+    pageMicRotationTimer = null;
+    pageMicRotationDeadlineTimer = null;
+  }
+  function startPageMicRecorderWindow(stream, meetingSessionId) {
+    if (!shouldCapturePageMicrophone(meetingSessionId)) return;
+    if (!stream.active || !stream.getAudioTracks().some((track) => track.readyState === "live")) {
+      restartPageMicrophoneCapture("stream-not-live-before-window", meetingSessionId);
+      return;
+    }
+    const recorder = new MediaRecorder(stream, { mimeType: "audio/webm" });
+    pageMicRecorder = recorder;
+    pageMicSessionId = meetingSessionId;
+    pageMicChunkStartedAt = Date.now();
+    expectedPageMicStop = false;
+    pageMicRequestedChunkAt = 0;
+    clearPageMicRotationTimers();
+    recorder.onstart = () => sendCaptureDiagnostic("page_mic_window_started");
+    recorder.onerror = () => {
+      if (pageMicRecorder === recorder) restartPageMicrophoneCapture("recorder-error", meetingSessionId);
+    };
+    recorder.onstop = () => {
+      settlePageMicFlushes();
+      if (expectedPageMicStops.has(recorder)) return;
+      if (pageMicRotatingRecorder === recorder && pageMicRecorder === recorder && shouldCapturePageMicrophone(meetingSessionId)) {
+        clearPageMicRotationTimers();
+        pageMicRotatingRecorder = null;
+        startPageMicRecorderWindow(stream, meetingSessionId);
+        return;
+      }
+      if (pageMicRecorder === recorder && pageMicSessionId === meetingSessionId) {
+        restartPageMicrophoneCapture("recorder-stopped", meetingSessionId);
+      }
+    };
+    recorder.ondataavailable = async (event) => {
+      try {
+        lastPageMicDataAvailableAt = Date.now();
+        pageMicRequestedChunkAt = 0;
+        if (!state.meetingSessionId) return;
+        if (!event.data || event.data.size < 1e3) {
+          pageMicConsecutiveTinyChunks++;
+          pageMicChunksSinceText++;
+          sendCaptureDiagnostic("page_mic_chunk_too_small", { size: event.data?.size || 0 });
+          return;
+        }
+        pageMicConsecutiveTinyChunks = 0;
+        const chunkEndedAt = Date.now();
+        const chunkStartedAt = pageMicChunkStartedAt || chunkEndedAt;
+        const dataUrl = await blobToDataUrl(event.data);
+        if (pageMicUploadQueue.length >= PAGE_MIC_MAX_QUEUED_CHUNKS) {
+          sendCaptureDiagnostic("page_mic_upload_queue_full", { queue_depth: pageMicUploadQueue.length, max_queue_depth: PAGE_MIC_MAX_QUEUED_CHUNKS });
+          pageMicUploadQueue.shift();
+          sendCaptureDiagnostic("page_mic_upload_queue_drop_oldest", { queue_depth: pageMicUploadQueue.length });
+        }
+        pageMicUploadQueue.push({ meetingSessionId, dataUrl, mimeType: event.data.type || "audio/webm", startOffsetMs: chunkStartedAt, endOffsetMs: chunkEndedAt });
+        void drainPageMicUploadQueue();
+      } finally {
+        settlePageMicFlushes();
+      }
+    };
+    try {
+      recorder.start();
+    } catch (_) {
+      restartPageMicrophoneCapture("recorder-start-failed", meetingSessionId);
+      return;
+    }
+    pageMicRotationTimer = setTimeout(() => {
+      if (pageMicRecorder !== recorder || recorder.state !== "recording") return;
+      pageMicRotatingRecorder = recorder;
+      pageMicRotationDeadlineTimer = setTimeout(() => {
+        if (pageMicRecorder === recorder && pageMicRotatingRecorder === recorder) {
+          restartPageMicrophoneCapture("window-stop-not-delivered", meetingSessionId);
+        }
+      }, PAGE_MIC_REQUESTED_CHUNK_TIMEOUT_MS);
+      try {
+        recorder.stop();
+        sendCaptureDiagnostic("page_mic_window_rotation_requested");
+      } catch (_) {
+        restartPageMicrophoneCapture("window-stop-failed", meetingSessionId);
+      }
+    }, PAGE_MIC_TRANSCRIPTION_CADENCE_MS);
+  }
+  async function startPageMicrophoneCapture() {
+    if (!state.meetingSessionId) return;
+    if (pageMicRecorder && pageMicSessionId === state.meetingSessionId && pageMicRecorder.state === "recording") return;
     if (pageMicStartInFlight) return;
-    stopPageMicrophoneCapture({ preserveRecovery: true });
     const meetingSessionId = state.meetingSessionId;
     pageMicStartInFlight = true;
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          // This is a second mic stream, independent of the meeting app's own
-          // stream. Explicitly request browser processing here to suppress speaker
-          // output leaking back into the mic and being labelled as "You".
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true
-        }
+        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
       });
-      const recorder = new MediaRecorder(stream, { mimeType: "audio/webm" });
-      pageMicRecorder = recorder;
-      pageMicSessionId = meetingSessionId;
-      pageMicChunkStartedAt = Date.now();
-      expectedPageMicStop = false;
+      if (!shouldCapturePageMicrophone(meetingSessionId)) {
+        stream.getTracks().forEach((track) => track.stop());
+        return;
+      }
+      pageMicStream = stream;
       pageMicRecoveryAttempt = 0;
       resetPageMicHealth();
-      recorder.onstart = () => sendCaptureDiagnostic("page_mic_capture_started");
-      recorder.onerror = () => {
-        if (pageMicRecorder === recorder) restartPageMicrophoneCapture("recorder-error", meetingSessionId);
-      };
-      recorder.onstop = () => {
-        if (!expectedPageMicStop && pageMicRecorder === recorder && pageMicSessionId === meetingSessionId) {
-          restartPageMicrophoneCapture("recorder-stopped", meetingSessionId);
-        }
-      };
       stream.getAudioTracks().forEach((track) => {
         track.addEventListener("ended", () => {
-          if (pageMicRecorder === recorder) restartPageMicrophoneCapture("track-ended", meetingSessionId);
+          if (pageMicStream === stream) restartPageMicrophoneCapture("track-ended", meetingSessionId);
         });
-        track.addEventListener("mute", () => {
-          sendCaptureDiagnostic("page_mic_track_muted", { ready_state: track.readyState });
-        });
+        track.addEventListener("mute", () => sendCaptureDiagnostic("page_mic_track_muted", { ready_state: track.readyState }));
       });
-      recorder.ondataavailable = async (event) => {
-        try {
-          lastPageMicDataAvailableAt = Date.now();
-          if (!state.meetingSessionId) return;
-          if (!event.data || event.data.size < 1e3) {
-            pageMicConsecutiveTinyChunks++;
-            pageMicChunksSinceText++;
-            sendCaptureDiagnostic("page_mic_chunk_too_small", { size: event.data?.size || 0 });
-            return;
+      startPageMicRecorderWindow(stream, meetingSessionId);
+      if (!pageMicInterval) {
+        pageMicInterval = setInterval(() => {
+          const active = pageMicRecorder;
+          if (!shouldCapturePageMicrophone(meetingSessionId)) return;
+          if (!active || !pageMicStream || !pageMicStream.active || !pageMicStream.getAudioTracks().some((track) => track.readyState === "live")) {
+            restartPageMicrophoneCapture("health-check-failed", meetingSessionId);
           }
-          pageMicConsecutiveTinyChunks = 0;
-          const chunkEndedAt = Date.now();
-          const chunkStartedAt = pageMicChunkStartedAt || chunkEndedAt;
-          pageMicChunkStartedAt = Date.now();
-          const dataUrl = await blobToDataUrl(event.data);
-          if (pageMicUploadQueue.length >= PAGE_MIC_MAX_QUEUED_CHUNKS) {
-            sendCaptureDiagnostic("page_mic_upload_queue_full", {
-              queue_depth: pageMicUploadQueue.length,
-              max_queue_depth: PAGE_MIC_MAX_QUEUED_CHUNKS
-            });
-            pageMicUploadQueue.shift();
-            sendCaptureDiagnostic("page_mic_upload_queue_drop_oldest", {
-              queue_depth: pageMicUploadQueue.length
-            });
-          }
-          pageMicUploadQueue.push({
-            meetingSessionId,
-            dataUrl,
-            mimeType: event.data.type || "audio/webm",
-            startOffsetMs: chunkStartedAt,
-            endOffsetMs: chunkEndedAt
-          });
-          void drainPageMicUploadQueue();
-        } finally {
-          settlePageMicFlushes();
-        }
-      };
-      recorder.start(PAGE_MIC_TRANSCRIPTION_CADENCE_MS);
-      pageMicInterval = setInterval(() => {
-        if (!pageMicRecorder || pageMicRecorder.state !== "recording") {
-          restartPageMicrophoneCapture("not-recording", meetingSessionId);
-          return;
-        }
-        if (!pageMicRecorder.stream.active || !pageMicRecorder.stream.getAudioTracks().some((track) => track.readyState === "live")) {
-          restartPageMicrophoneCapture("health-check-failed", meetingSessionId);
-          return;
-        }
-        if (Date.now() - lastPageMicDataAvailableAt > 12e4) {
-          restartPageMicrophoneCapture("no-audio-chunks", meetingSessionId);
-          return;
-        }
-      }, 15e3);
+        }, 5e3);
+      }
     } catch (err) {
-      sendCaptureDiagnostic("page_mic_start_failed", {
-        name: err?.name,
-        message: err?.message || String(err)
-      });
-      chrome.runtime.sendMessage({
-        type: "START_AUDIO_CAPTURE",
-        meetingSessionId,
-        captureMode: state.captureMode,
-        // This path only runs when Google Meet's page recorder could not start.
-        forceOffscreenMic: true
-      }).catch(() => {
+      sendCaptureDiagnostic("page_mic_start_failed", { name: err?.name, message: err?.message || String(err) });
+      chrome.runtime.sendMessage({ type: "START_AUDIO_CAPTURE", meetingSessionId, captureMode: state.captureMode, forceOffscreenMic: true }).catch(() => {
       });
       schedulePageMicrophoneCaptureRecovery("get-user-media-failed", meetingSessionId);
     } finally {
@@ -1343,6 +1392,11 @@
         updateStatusIndicator();
         startSignalCapture();
         break;
+      case "ENSURE_AUDIO_CAPTURE":
+        if (message.meetingSessionId === state.meetingSessionId && state.status === "active") {
+          ensurePageMicrophoneCapture(message.meetingSessionId);
+        }
+        break;
       case "COACHING_PAUSED":
         if (!message.meetingSessionId || message.meetingSessionId === state.meetingSessionId) {
           state.status = "ready";
@@ -1374,7 +1428,7 @@
         if (state.userSpeaking && !userSpeechIsFresh) {
           state.userSpeaking = false;
         }
-        const candidateSpeaker = stream === "tab" ? "other" : state.captureMode === "full_meeting" && !userSpeechIsFresh ? "other" : "user";
+        const candidateSpeaker = stream === "tab" ? "other" : "user";
         emitTranscriptSegment(
           message.text || "",
           candidateSpeaker,
