@@ -153,6 +153,7 @@
   }
 
   // src/utils/platform.ts
+  var GOOGLE_MEET_MEETING_URL = /meet\.google\.com\/(?:meet\/)?[a-z]+-[a-z]+-[a-z]+/i;
   function detectPlatformFromUrl(url) {
     if (url.includes("meet.google.com")) return "google_meet";
     if (url.includes("teams.microsoft.com") || url.includes("teams.live.com")) return "teams";
@@ -410,7 +411,7 @@
     const url = window.location.href;
     const platform = getPlatform();
     if (!platform) return false;
-    if (platform === "google_meet" && /meet\.google\.com\/[a-z]+-[a-z]+-[a-z]+/i.test(url)) {
+    if (platform === "google_meet" && GOOGLE_MEET_MEETING_URL.test(url)) {
       const hasVideo = !!document.querySelector("video");
       const hasCallControls = !!document.querySelector("[data-is-muted]") || !!document.querySelector('[aria-label*="Leave"]') || !!document.querySelector('[aria-label*="leave"]') || !!document.querySelector('[aria-label*="microphone" i]') || !!document.querySelector('[aria-label*="camera" i]') || !!document.querySelector('[aria-label*="captions" i]') || !!document.querySelector('[aria-label*="raise hand" i]') || !!document.querySelector('[data-tooltip*="Leave" i]') || !!document.querySelector('[data-tooltip*="microphone" i]') || !!document.querySelector('[data-tooltip*="camera" i]');
       const hasParticipantTiles = !!document.querySelector("[data-participant-id]") || !!document.querySelector("[data-self-name]") || !!document.querySelector('[data-is-self="true"]');
@@ -454,7 +455,7 @@
     } catch (_err) {
     }
     if (platform === "google_meet") {
-      return /meet\.google\.com\/[a-z]+-[a-z]+-[a-z]+/i.test(decodedUrl);
+      return GOOGLE_MEET_MEETING_URL.test(decodedUrl);
     }
     if (platform === "zoom") {
       return /\/wc\/\d+(?:\/(?:join|start|meeting))?(?:\/|$)/i.test(path);

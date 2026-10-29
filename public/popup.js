@@ -26,9 +26,9 @@
     mod
   ));
 
-  // ../../node_modules/react/cjs/react.development.js
+  // ../../../../../Users/rajivchandrasekaran/.openclaw/workspace/gleameet/node_modules/react/cjs/react.development.js
   var require_react_development = __commonJS({
-    "../../node_modules/react/cjs/react.development.js"(exports, module) {
+    "../../../../../Users/rajivchandrasekaran/.openclaw/workspace/gleameet/node_modules/react/cjs/react.development.js"(exports, module) {
       "use strict";
       if (true) {
         (function() {
@@ -1900,9 +1900,9 @@
     }
   });
 
-  // ../../node_modules/react/index.js
+  // ../../../../../Users/rajivchandrasekaran/.openclaw/workspace/gleameet/node_modules/react/index.js
   var require_react = __commonJS({
-    "../../node_modules/react/index.js"(exports, module) {
+    "../../../../../Users/rajivchandrasekaran/.openclaw/workspace/gleameet/node_modules/react/index.js"(exports, module) {
       "use strict";
       if (false) {
         module.exports = null;
@@ -1912,9 +1912,9 @@
     }
   });
 
-  // ../../node_modules/scheduler/cjs/scheduler.development.js
+  // ../../../../../Users/rajivchandrasekaran/.openclaw/workspace/gleameet/node_modules/scheduler/cjs/scheduler.development.js
   var require_scheduler_development = __commonJS({
-    "../../node_modules/scheduler/cjs/scheduler.development.js"(exports) {
+    "../../../../../Users/rajivchandrasekaran/.openclaw/workspace/gleameet/node_modules/scheduler/cjs/scheduler.development.js"(exports) {
       "use strict";
       if (true) {
         (function() {
@@ -2362,9 +2362,9 @@
     }
   });
 
-  // ../../node_modules/scheduler/index.js
+  // ../../../../../Users/rajivchandrasekaran/.openclaw/workspace/gleameet/node_modules/scheduler/index.js
   var require_scheduler = __commonJS({
-    "../../node_modules/scheduler/index.js"(exports, module) {
+    "../../../../../Users/rajivchandrasekaran/.openclaw/workspace/gleameet/node_modules/scheduler/index.js"(exports, module) {
       "use strict";
       if (false) {
         module.exports = null;
@@ -2374,9 +2374,9 @@
     }
   });
 
-  // ../../node_modules/react-dom/cjs/react-dom.development.js
+  // ../../../../../Users/rajivchandrasekaran/.openclaw/workspace/gleameet/node_modules/react-dom/cjs/react-dom.development.js
   var require_react_dom_development = __commonJS({
-    "../../node_modules/react-dom/cjs/react-dom.development.js"(exports) {
+    "../../../../../Users/rajivchandrasekaran/.openclaw/workspace/gleameet/node_modules/react-dom/cjs/react-dom.development.js"(exports) {
       "use strict";
       if (true) {
         (function() {
@@ -23538,9 +23538,9 @@
     }
   });
 
-  // ../../node_modules/react-dom/index.js
+  // ../../../../../Users/rajivchandrasekaran/.openclaw/workspace/gleameet/node_modules/react-dom/index.js
   var require_react_dom = __commonJS({
-    "../../node_modules/react-dom/index.js"(exports, module) {
+    "../../../../../Users/rajivchandrasekaran/.openclaw/workspace/gleameet/node_modules/react-dom/index.js"(exports, module) {
       "use strict";
       if (false) {
         checkDCE();
@@ -23551,9 +23551,9 @@
     }
   });
 
-  // ../../node_modules/react-dom/client.js
+  // ../../../../../Users/rajivchandrasekaran/.openclaw/workspace/gleameet/node_modules/react-dom/client.js
   var require_client = __commonJS({
-    "../../node_modules/react-dom/client.js"(exports) {
+    "../../../../../Users/rajivchandrasekaran/.openclaw/workspace/gleameet/node_modules/react-dom/client.js"(exports) {
       "use strict";
       var m = require_react_dom();
       if (false) {
@@ -23642,9 +23642,9 @@
       exports.LATENCY_TARGETS = exports.DEFAULT_RETENTION_DAYS = exports.RANKING_WEIGHTS = exports.PROMPT_LIMITS = exports.ROLLING_WINDOWS = exports.MAX_LIVE_CUES_PER_MEETING = exports.MAX_PROMPTS_PER_30_MIN = exports.EVOLVIO_STRUCTURED_RETENTION_DAYS = exports.EVOLVIO_PATTERN_THRESHOLDS = exports.EVOLVIO_INFERENCE_SCHEMA_VERSION = exports.EVOLVIO_PROMPT_TEMPLATE_VERSION = exports.EVOLVIO_PATTERN_THRESHOLD_VERSION = exports.EVOLVIO_RULE_REGISTRY_VERSION = exports.DEFAULT_CAPTURE_MODE = void 0;
       exports.DEFAULT_CAPTURE_MODE = "user_voice_only";
       exports.EVOLVIO_RULE_REGISTRY_VERSION = "law-registry.v1";
-      exports.EVOLVIO_PATTERN_THRESHOLD_VERSION = "pattern-policy.v1.5";
-      exports.EVOLVIO_PROMPT_TEMPLATE_VERSION = "customer-mode-framework.v2.0";
-      exports.EVOLVIO_INFERENCE_SCHEMA_VERSION = "evolvio.inference.v2.0";
+      exports.EVOLVIO_PATTERN_THRESHOLD_VERSION = "pattern-thresholds.test.v1";
+      exports.EVOLVIO_PROMPT_TEMPLATE_VERSION = "prompt-templates.v3";
+      exports.EVOLVIO_INFERENCE_SCHEMA_VERSION = "evolvio.incremental.v1";
       exports.EVOLVIO_PATTERN_THRESHOLDS = {
         MIN_SUPPORTING_OBSERVATIONS_FOR_CANDIDATE: 1,
         MIN_SUPPORTING_MEETINGS_FOR_EMERGING: 2,
@@ -23658,9 +23658,11 @@
         CORRECTIONS: 730
       };
       exports.MAX_PROMPTS_PER_30_MIN = {
-        "minimal": 250,
-        "standard": 500,
-        "high-support": 500
+        "minimal": 15,
+        // Keep standard coaching alive through long meetings; the 15s global cooldown
+        // remains the effective throttle.
+        "standard": 120,
+        "high-support": 120
       };
       exports.MAX_LIVE_CUES_PER_MEETING = 1e3;
       exports.ROLLING_WINDOWS = {
@@ -23670,7 +23672,8 @@
         // full meeting to date
       };
       exports.PROMPT_LIMITS = {
-        BODY_MAX_WORDS: 12,
+        BODY_MAX_WORDS: 25,
+        // FR-058 (extended for richer nudges)
         RATIONALE_MAX_WORDS: 10,
         // FR-059
         EXAMPLE_MAX_WORDS: 20
@@ -24127,9 +24130,9 @@
     }
   });
 
-  // ../../node_modules/react/cjs/react-jsx-runtime.development.js
+  // ../../../../../Users/rajivchandrasekaran/.openclaw/workspace/gleameet/node_modules/react/cjs/react-jsx-runtime.development.js
   var require_react_jsx_runtime_development = __commonJS({
-    "../../node_modules/react/cjs/react-jsx-runtime.development.js"(exports) {
+    "../../../../../Users/rajivchandrasekaran/.openclaw/workspace/gleameet/node_modules/react/cjs/react-jsx-runtime.development.js"(exports) {
       "use strict";
       if (true) {
         (function() {
@@ -25020,9 +25023,9 @@
     }
   });
 
-  // ../../node_modules/react/jsx-runtime.js
+  // ../../../../../Users/rajivchandrasekaran/.openclaw/workspace/gleameet/node_modules/react/jsx-runtime.js
   var require_jsx_runtime = __commonJS({
-    "../../node_modules/react/jsx-runtime.js"(exports, module) {
+    "../../../../../Users/rajivchandrasekaran/.openclaw/workspace/gleameet/node_modules/react/jsx-runtime.js"(exports, module) {
       "use strict";
       if (false) {
         module.exports = null;
@@ -25163,6 +25166,7 @@
     "https://zoom.us/wc/*",
     "https://app.zoom.us/wc/*"
   ];
+  var GOOGLE_MEET_MEETING_URL = /meet\.google\.com\/(?:meet\/)?[a-z]+-[a-z]+-[a-z]+/i;
   function detectPlatformFromUrl(url) {
     if (url.includes("meet.google.com")) return "google_meet";
     if (url.includes("teams.microsoft.com") || url.includes("teams.live.com")) return "teams";
@@ -25258,7 +25262,7 @@
     } catch (_err) {
     }
     if (platform === "google_meet") {
-      return /meet\.google\.com\/[a-z]+-[a-z]+-[a-z]+/i.test(decodedUrl);
+      return GOOGLE_MEET_MEETING_URL.test(decodedUrl);
     }
     if (platform === "zoom") {
       return /\/wc\/\d+(?:\/(?:join|start|meeting))?(?:\/|$)/i.test(path);

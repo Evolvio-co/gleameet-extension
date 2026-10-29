@@ -129,6 +129,7 @@ var MEETING_TAB_URL_PATTERNS = [
   "https://zoom.us/wc/*",
   "https://app.zoom.us/wc/*"
 ];
+var GOOGLE_MEET_MEETING_URL = /meet\.google\.com\/(?:meet\/)?[a-z]+-[a-z]+-[a-z]+/i;
 function detectPlatformFromUrl(url) {
   if (url.includes("meet.google.com")) return "google_meet";
   if (url.includes("teams.microsoft.com") || url.includes("teams.live.com")) return "teams";
@@ -1221,7 +1222,7 @@ function isLikelyMeetingUrl(url) {
   } catch (_err) {
   }
   if (platform === "google_meet") {
-    return /meet\.google\.com\/[a-z]+-[a-z]+-[a-z]+/i.test(decodedUrl);
+    return GOOGLE_MEET_MEETING_URL.test(decodedUrl);
   }
   if (platform === "zoom") {
     return /\/wc\/\d+(?:\/(?:join|start|meeting))?(?:\/|$)/i.test(path);
@@ -1364,7 +1365,7 @@ async function probeMeetingPage(tab) {
           return { meetingDetected: hasWebClientMeetingUrl && !visibleEndedScreen, platform };
         }
         if (platform === "google_meet") {
-          return { meetingDetected: /meet\.google\.com\/[a-z]+-[a-z]+-[a-z]+/i.test(decodedUrl), platform };
+          return { meetingDetected: /meet\.google\.com\/(?:meet\/)?[a-z]+-[a-z]+-[a-z]+/i.test(decodedUrl), platform };
         }
         return {
           meetingDetected: decodedUrl.includes("/meet/") || decodedUrl.includes("/callingv2") || decodedUrl.includes("/light-meetings/launch") || decodedUrl.includes("/l/meetup-join") || decodedUrl.includes("type=meet") || decodedUrl.includes("lightExperience=true"),
