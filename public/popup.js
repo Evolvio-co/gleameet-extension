@@ -23658,11 +23658,11 @@
         CORRECTIONS: 730
       };
       exports.MAX_PROMPTS_PER_30_MIN = {
-        "minimal": 2,
-        "standard": 6,
-        "high-support": 8
+        "minimal": 250,
+        "standard": 500,
+        "high-support": 500
       };
-      exports.MAX_LIVE_CUES_PER_MEETING = 8;
+      exports.MAX_LIVE_CUES_PER_MEETING = 1e3;
       exports.ROLLING_WINDOWS = {
         SHORT: 30,
         MEDIUM: 90,
@@ -23787,6 +23787,40 @@
           practice_cue: "When you describe a risk",
           practice_behavior: "add one upside, option, or tradeoff in the same breath",
           measure_metric: "Risk statements paired with one upside or option"
+        },
+        mark_anchor_provisional: {
+          behavior_code: "mark_anchor_provisional",
+          lens: "communication",
+          label: "Mark an anchor as provisional",
+          description: "Present an early number, estimate, or concrete proposal as a starting point rather than a fixed commitment.",
+          supported_capture_modes: ["user_voice_only", "full_meeting"],
+          evidence_quality_minimum: "direct_user_signal",
+          permitted_inferences: ["An early concrete anchor may be easier to evaluate when its provisional status is explicit."],
+          prohibited_inferences: ["manipulation", "control", "bias label", "intent"],
+          disconfirming_features: ["option_count_presented", "hedging_language_score"],
+          live_eligible: true,
+          cue_mode: "say",
+          safe_prompt_template: "Treat this as a starting point.",
+          practice_cue: "When you introduce an early number or concrete proposal",
+          practice_behavior: "state that the number is provisional and invite adjustment",
+          measure_metric: "One early anchor explicitly marked provisional"
+        },
+        recommend_default: {
+          behavior_code: "recommend_default",
+          lens: "communication",
+          label: "Recommend a default",
+          description: "When several options are on the table, state a recommended path so the decision can be inspected.",
+          supported_capture_modes: ["user_voice_only", "full_meeting"],
+          evidence_quality_minimum: "direct_user_signal",
+          permitted_inferences: ["A stated default may reduce decision friction when options are already observable in the user transcript."],
+          prohibited_inferences: ["authority", "leadership potential", "decision-right ownership", "intent"],
+          disconfirming_features: ["default_recommendation_present"],
+          live_eligible: true,
+          cue_mode: "say",
+          safe_prompt_template: "My recommendation is\u2026",
+          practice_cue: "When you have named several options",
+          practice_behavior: "name one default and the reason it is preferred",
+          measure_metric: "One recommendation after presenting options"
         },
         ground_claim_with_example: {
           behavior_code: "ground_claim_with_example",
@@ -23959,6 +23993,110 @@
     }
   });
 
+  // ../shared/dist/capture-integrity.js
+  var require_capture_integrity = __commonJS({
+    "../shared/dist/capture-integrity.js"(exports) {
+      "use strict";
+      Object.defineProperty(exports, "__esModule", { value: true });
+      exports.WebSpeechGate = exports.WEB_SPEECH_SUPPRESSION_MS = void 0;
+      exports.transcriptTextRejection = transcriptTextRejection;
+      exports.isUsableTranscriptText = isUsableTranscriptText;
+      exports.audioWindowOutcomeRecord = audioWindowOutcomeRecord;
+      exports.meetingRelativeTimeline = meetingRelativeTimeline2;
+      var CONTAMINATION_PATTERNS = [
+        /\blet us know in the comments\b/,
+        /\bthanks? (you )?for watching\b/,
+        /\b(please )?(like and )?subscribe to (my|our|the) channel\b/,
+        /\bsee you in the next video\b/,
+        /\bsubtitles (by|created by)\b/,
+        /\bamara\.org\b/
+      ];
+      var LOW_INFORMATION_WORDS = /* @__PURE__ */ new Set([
+        "um",
+        "uh",
+        "er",
+        "erm",
+        "ah",
+        "oh",
+        "hm",
+        "hmm",
+        "mm",
+        "mhm",
+        "mmhmm",
+        "mm-hmm",
+        "uh-huh",
+        "uh-uh",
+        "you",
+        "right"
+      ]);
+      function transcriptTextRejection(text) {
+        const normalized = (text || "").toLowerCase().replace(/\s+/g, " ").trim();
+        if (!normalized)
+          return "empty";
+        if (CONTAMINATION_PATTERNS.some((pattern) => pattern.test(normalized)))
+          return "contaminated";
+        const words = normalized.split(" ").map((word) => word.replace(/^[^a-z0-9]+|[^a-z0-9]+$/g, "")).filter(Boolean);
+        if (words.length === 0 || words.every((word) => LOW_INFORMATION_WORDS.has(word)))
+          return "low_information";
+        return null;
+      }
+      function isUsableTranscriptText(text) {
+        return transcriptTextRejection(text) === null;
+      }
+      function audioWindowOutcomeRecord(input) {
+        const record = {
+          path: input.path,
+          stream: input.stream,
+          outcome: input.outcome,
+          chars: input.chars ?? 0
+        };
+        if (input.windowStartMs !== void 0)
+          record.window_start_ms = input.windowStartMs;
+        if (input.windowEndMs !== void 0)
+          record.window_end_ms = input.windowEndMs;
+        if (input.filteredReason)
+          record.filtered_reason = input.filteredReason;
+        if (input.filteredChars !== void 0)
+          record.filtered_chars = input.filteredChars;
+        if (input.bytes !== void 0)
+          record.bytes = input.bytes;
+        return record;
+      }
+      exports.WEB_SPEECH_SUPPRESSION_MS = 3e4;
+      var WebSpeechGate = class {
+        lastMicTranscriptAt = Number.NEGATIVE_INFINITY;
+        /** Records a Whisper result. Returns true if it renewed the suppression window. */
+        onWhisperResult(stream, text, nowMs) {
+          if (stream !== "mic" || !isUsableTranscriptText(text))
+            return false;
+          this.lastMicTranscriptAt = nowMs;
+          return true;
+        }
+        allowsWebSpeechFinal(nowMs) {
+          return nowMs - this.lastMicTranscriptAt >= exports.WEB_SPEECH_SUPPRESSION_MS;
+        }
+      };
+      exports.WebSpeechGate = WebSpeechGate;
+      function meetingRelativeTimeline2(entries, meetingStartedAt) {
+        let carried = null;
+        const timed = entries.map((entry, index) => {
+          const parsed = entry.event_time_utc ? Date.parse(entry.event_time_utc) : NaN;
+          if (Number.isFinite(parsed))
+            carried = parsed;
+          return { entry, index, ms: carried };
+        });
+        const known = timed.filter((item) => item.ms !== null).map((item) => item.ms);
+        const firstEventMs = known.length > 0 ? Math.min(...known) : null;
+        const startMs = meetingStartedAt ? Date.parse(meetingStartedAt) : NaN;
+        const originMs = Number.isFinite(startMs) && (firstEventMs === null || startMs <= firstEventMs) ? startMs : firstEventMs;
+        return timed.sort((a, b) => (a.ms ?? -Infinity) - (b.ms ?? -Infinity) || a.index - b.index).map(({ entry, ms }) => ({
+          ...entry,
+          elapsed_ms: ms !== null && originMs !== null ? ms - originMs : 0
+        }));
+      }
+    }
+  });
+
   // ../shared/dist/index.js
   var require_dist = __commonJS({
     "../shared/dist/index.js"(exports) {
@@ -23985,6 +24123,7 @@
       __exportStar(require_constants(), exports);
       __exportStar(require_api_types(), exports);
       __exportStar(require_evolvio_behavior_registry(), exports);
+      __exportStar(require_capture_integrity(), exports);
     }
   });
 
@@ -25513,7 +25652,8 @@
       try {
         await ensureToken();
         const data = await getTranscript(meetingSessionId);
-        setTranscript(data);
+        const startedAt = meetings.find((m) => m.meeting_session_id === meetingSessionId)?.started_at;
+        setTranscript({ ...data, entries: (0, import_shared.meetingRelativeTimeline)(data.entries, startedAt) });
         setView("transcript");
       } catch (e) {
         setError(e.message || "Failed to load transcript");
@@ -25660,7 +25800,7 @@
         ""
       ];
       for (const entry of transcript.entries) {
-        const ts = formatTimestamp(entry.start_offset_ms);
+        const ts = formatTimestamp(entry.elapsed_ms);
         const speaker = entry.speaker === "user" ? "You" : "Other";
         lines.push(`[${ts}] ${speaker}: ${entry.text}`);
       }
@@ -25858,7 +25998,7 @@
           transcript.entries.map((entry, i) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "transcript-entry", children: [
             /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "transcript-meta", children: [
               /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: `transcript-speaker speaker-${entry.speaker}`, children: entry.speaker === "user" ? "You" : "Other" }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "transcript-time", children: formatTimestamp(entry.start_offset_ms) })
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "transcript-time", children: formatTimestamp(entry.elapsed_ms) })
             ] }),
             /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "transcript-text", children: entry.text })
           ] }, i))

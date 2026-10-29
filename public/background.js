@@ -652,7 +652,7 @@ function ensureOffscreenDocument() {
 function handleStartAudioCapture(meetingSessionId, captureMode = state.captureMode, forceOffscreenMic = false) {
   const token = getSessionToken();
   Promise.all([ensureOffscreenDocument(), getApiBase()]).then(([, apiBase]) => {
-    const usePageMic = state.platform === "google_meet" && !forceOffscreenMic;
+    const usePageMic = (state.platform === "google_meet" || state.platform === "zoom") && !forceOffscreenMic;
     if (!usePageMic) {
       chrome.runtime.sendMessage({
         type: "START_MIC_CAPTURE",
@@ -1003,8 +1003,10 @@ async function transcribePageMicAudioChunk(message) {
       message.meetingSessionId
     );
     if (!result?.text) {
-      bufferCaptureDiagnostic("page_mic_transcribe_empty");
-      return { ok: true, skipped: true };
+      const filtered = typeof result?.filtered === "string" ? result.filtered : void 0;
+      const filteredChars = typeof result?.filtered_chars === "number" ? result.filtered_chars : void 0;
+      bufferCaptureDiagnostic("page_mic_transcribe_empty", filtered ? { filtered_reason: filtered } : {});
+      return { ok: true, skipped: true, empty: true, filtered, filtered_chars: filteredChars };
     }
     broadcastAudioTranscript({
       text: result.text,

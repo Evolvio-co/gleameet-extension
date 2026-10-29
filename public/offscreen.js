@@ -1,6 +1,137 @@
 "use strict";
 (() => {
+  var __create = Object.create;
+  var __defProp = Object.defineProperty;
+  var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
+  var __getOwnPropNames = Object.getOwnPropertyNames;
+  var __getProtoOf = Object.getPrototypeOf;
+  var __hasOwnProp = Object.prototype.hasOwnProperty;
+  var __commonJS = (cb, mod) => function __require() {
+    return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
+  };
+  var __copyProps = (to, from, except, desc) => {
+    if (from && typeof from === "object" || typeof from === "function") {
+      for (let key of __getOwnPropNames(from))
+        if (!__hasOwnProp.call(to, key) && key !== except)
+          __defProp(to, key, { get: () => from[key], enumerable: !(desc = __getOwnPropDesc(from, key)) || desc.enumerable });
+    }
+    return to;
+  };
+  var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__getProtoOf(mod)) : {}, __copyProps(
+    // If the importer is in node compatibility mode or this is not an ESM
+    // file that has been converted to a CommonJS file using a Babel-
+    // compatible transform (i.e. "__esModule" has not been set), then set
+    // "default" to the CommonJS "module.exports" for node compatibility.
+    isNodeMode || !mod || !mod.__esModule ? __defProp(target, "default", { value: mod, enumerable: true }) : target,
+    mod
+  ));
+
+  // ../shared/dist/capture-integrity.js
+  var require_capture_integrity = __commonJS({
+    "../shared/dist/capture-integrity.js"(exports) {
+      "use strict";
+      Object.defineProperty(exports, "__esModule", { value: true });
+      exports.WebSpeechGate = exports.WEB_SPEECH_SUPPRESSION_MS = void 0;
+      exports.transcriptTextRejection = transcriptTextRejection;
+      exports.isUsableTranscriptText = isUsableTranscriptText;
+      exports.audioWindowOutcomeRecord = audioWindowOutcomeRecord2;
+      exports.meetingRelativeTimeline = meetingRelativeTimeline;
+      var CONTAMINATION_PATTERNS = [
+        /\blet us know in the comments\b/,
+        /\bthanks? (you )?for watching\b/,
+        /\b(please )?(like and )?subscribe to (my|our|the) channel\b/,
+        /\bsee you in the next video\b/,
+        /\bsubtitles (by|created by)\b/,
+        /\bamara\.org\b/
+      ];
+      var LOW_INFORMATION_WORDS = /* @__PURE__ */ new Set([
+        "um",
+        "uh",
+        "er",
+        "erm",
+        "ah",
+        "oh",
+        "hm",
+        "hmm",
+        "mm",
+        "mhm",
+        "mmhmm",
+        "mm-hmm",
+        "uh-huh",
+        "uh-uh",
+        "you",
+        "right"
+      ]);
+      function transcriptTextRejection(text) {
+        const normalized = (text || "").toLowerCase().replace(/\s+/g, " ").trim();
+        if (!normalized)
+          return "empty";
+        if (CONTAMINATION_PATTERNS.some((pattern) => pattern.test(normalized)))
+          return "contaminated";
+        const words = normalized.split(" ").map((word) => word.replace(/^[^a-z0-9]+|[^a-z0-9]+$/g, "")).filter(Boolean);
+        if (words.length === 0 || words.every((word) => LOW_INFORMATION_WORDS.has(word)))
+          return "low_information";
+        return null;
+      }
+      function isUsableTranscriptText(text) {
+        return transcriptTextRejection(text) === null;
+      }
+      function audioWindowOutcomeRecord2(input) {
+        const record = {
+          path: input.path,
+          stream: input.stream,
+          outcome: input.outcome,
+          chars: input.chars ?? 0
+        };
+        if (input.windowStartMs !== void 0)
+          record.window_start_ms = input.windowStartMs;
+        if (input.windowEndMs !== void 0)
+          record.window_end_ms = input.windowEndMs;
+        if (input.filteredReason)
+          record.filtered_reason = input.filteredReason;
+        if (input.filteredChars !== void 0)
+          record.filtered_chars = input.filteredChars;
+        if (input.bytes !== void 0)
+          record.bytes = input.bytes;
+        return record;
+      }
+      exports.WEB_SPEECH_SUPPRESSION_MS = 3e4;
+      var WebSpeechGate = class {
+        lastMicTranscriptAt = Number.NEGATIVE_INFINITY;
+        /** Records a Whisper result. Returns true if it renewed the suppression window. */
+        onWhisperResult(stream, text, nowMs) {
+          if (stream !== "mic" || !isUsableTranscriptText(text))
+            return false;
+          this.lastMicTranscriptAt = nowMs;
+          return true;
+        }
+        allowsWebSpeechFinal(nowMs) {
+          return nowMs - this.lastMicTranscriptAt >= exports.WEB_SPEECH_SUPPRESSION_MS;
+        }
+      };
+      exports.WebSpeechGate = WebSpeechGate;
+      function meetingRelativeTimeline(entries, meetingStartedAt) {
+        let carried = null;
+        const timed = entries.map((entry, index) => {
+          const parsed = entry.event_time_utc ? Date.parse(entry.event_time_utc) : NaN;
+          if (Number.isFinite(parsed))
+            carried = parsed;
+          return { entry, index, ms: carried };
+        });
+        const known = timed.filter((item) => item.ms !== null).map((item) => item.ms);
+        const firstEventMs = known.length > 0 ? Math.min(...known) : null;
+        const startMs = meetingStartedAt ? Date.parse(meetingStartedAt) : NaN;
+        const originMs = Number.isFinite(startMs) && (firstEventMs === null || startMs <= firstEventMs) ? startMs : firstEventMs;
+        return timed.sort((a, b) => (a.ms ?? -Infinity) - (b.ms ?? -Infinity) || a.index - b.index).map(({ entry, ms }) => ({
+          ...entry,
+          elapsed_ms: ms !== null && originMs !== null ? ms - originMs : 0
+        }));
+      }
+    }
+  });
+
   // src/offscreen.ts
+  var import_capture_integrity = __toESM(require_capture_integrity());
   var micRecorder = null;
   var micCapture = null;
   var micSessionId = null;
@@ -277,6 +408,16 @@
         sendDiagnostic("offscreen_track_muted", { ready_state: track.readyState });
       });
     });
+    const sendWindowOutcome = (window, outcome, detail = {}) => {
+      sendDiagnostic("audio_window_outcome", (0, import_capture_integrity.audioWindowOutcomeRecord)({
+        path: "offscreen",
+        stream: streamType === "tab" ? "tab" : "mic",
+        outcome,
+        windowStartMs: window.startOffsetMs,
+        windowEndMs: window.endOffsetMs,
+        ...detail
+      }));
+    };
     const drainUploadQueue = async () => {
       if (uploadInFlight) return;
       uploadInFlight = true;
@@ -291,14 +432,20 @@
               queue_depth: uploadQueue.length,
               message: err?.message || String(err)
             });
+            sendWindowOutcome(chunk, "upload_failed");
             uploadQueue.shift();
             continue;
           }
           uploadQueue.shift();
           if (!result?.text) {
             sendDiagnostic("offscreen_chunk_empty", { queue_depth: uploadQueue.length });
+            sendWindowOutcome(chunk, result?.filtered ? "filtered" : "empty", {
+              filteredReason: result?.filtered,
+              filteredChars: result?.filtered_chars
+            });
             continue;
           }
+          sendWindowOutcome(chunk, "transcribed", { chars: result.text.length });
           chrome.runtime.sendMessage({
             type: "AUDIO_TRANSCRIPT_RESULT",
             text: result.text,
@@ -318,6 +465,7 @@
       try {
         if (!e.data || e.data.size < 1e3) {
           sendDiagnostic("offscreen_chunk_too_small", { size: e.data?.size || 0 });
+          sendWindowOutcome({ startOffsetMs: chunkStartedAt, endOffsetMs: Date.now() }, "too_small", { bytes: e.data?.size || 0 });
           return;
         }
         const chunkEndedAt = Date.now();
@@ -328,7 +476,8 @@
             queue_depth: uploadQueue.length,
             max_queue_depth: MAX_QUEUED_TRANSCRIPTION_CHUNKS
           });
-          uploadQueue.shift();
+          const dropped = uploadQueue.shift();
+          if (dropped) sendWindowOutcome(dropped, "dropped");
           sendDiagnostic("offscreen_upload_queue_drop_oldest", {
             queue_depth: uploadQueue.length
           });
