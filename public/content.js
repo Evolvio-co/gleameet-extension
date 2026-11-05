@@ -250,8 +250,7 @@
           reason: "non_user_context"
         };
       }
-      const overlapMatch = this.findBestNonUserOverlap(params.text, params.timestampMs);
-      if (params.source === "mic" && params.captureMode === "user_voice_only") {
+      if (params.source === "mic") {
         return {
           source: params.source,
           capture_mode: params.captureMode,
@@ -261,6 +260,7 @@
           reason: "trusted_mic_capture"
         };
       }
+      const overlapMatch = this.findBestNonUserOverlap(params.text, params.timestampMs);
       if (overlapMatch && overlapMatch.score >= STRONG_OVERLAP_SCORE) {
         return {
           source: params.source,
