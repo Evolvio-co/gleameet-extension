@@ -224,6 +224,15 @@
       if (!text) return null;
       this.pruneContext(params.timestampMs);
       const attribution = this.buildAttribution(params);
+      if (this.isDuplicateAcrossUserCaptureSources({
+        text,
+        source: params.source,
+        speaker: attribution.final_speaker,
+        startOffsetMs: params.startOffsetMs,
+        endOffsetMs: params.endOffsetMs
+      })) {
+        return null;
+      }
       const payload = {
         text,
         speaker: attribution.final_speaker,
@@ -235,7 +244,9 @@
         speaker: payload.speaker,
         source: params.source,
         text,
-        ts: params.timestampMs
+        ts: params.timestampMs,
+        startOffsetMs: params.startOffsetMs,
+        endOffsetMs: params.endOffsetMs
       });
       return payload;
     }
@@ -293,6 +304,24 @@
         }
       }
       return best;
+    }
+    /**
+     * The browser Web Speech fallback and the microphone transcription service
+     * hear the same user audio. Web Speech arrives first, while a recorder
+     * window can arrive several seconds later. Only collapse matching text when
+     * their audio windows overlap; an intentional later repetition remains.
+     */
+    isDuplicateAcrossUserCaptureSources(params) {
+      if (params.speaker !== "user") return false;
+      const sources = /* @__PURE__ */ new Set(["mic", "web_speech"]);
+      if (!sources.has(params.source)) return false;
+      return this.recentContext.some((entry) => {
+        if (entry.speaker !== "user" || entry.source === params.source || !sources.has(entry.source)) {
+          return false;
+        }
+        const spansOverlap = params.startOffsetMs <= entry.endOffsetMs && entry.startOffsetMs <= params.endOffsetMs;
+        return spansOverlap && computeOverlapScore(params.text, entry.text) >= STRONG_OVERLAP_SCORE;
+      });
     }
     rememberContext(entry) {
       this.recentContext.push(entry);
@@ -1048,6 +1077,7 @@
     const shouldDismissPrompt = options.dismissPrompt ?? true;
     const stoppedSessionId = state.signalCaptureSessionId;
     state.signalCaptureSessionId = null;
+    clearPendingWebSpeechFallbacks();
     stopPageMicrophoneCapture();
     if (stopAudio) {
       chrome.runtime.sendMessage({ type: "STOP_AUDIO_CAPTURE", meetingSessionId: stoppedSessionId }).catch(() => {
@@ -1134,7 +1164,7 @@
           const text = result[0].transcript.trim();
           if (!text) continue;
           if (result.isFinal && webSpeechGate.allowsWebSpeechFinal(Date.now())) {
-            emitTranscriptSegment(text, "user", "web_speech", 0.9);
+            queueWebSpeechFallback(text);
           }
         }
       };
@@ -1241,6 +1271,26 @@
     emitEvent("transcript_segment", payload, captureConfidence);
   }
   var webSpeechGate = new import_capture_integrity.WebSpeechGate();
+  var WEB_SPEECH_FALLBACK_DELAY_MS = 35e3;
+  var pendingWebSpeechFallbacks = /* @__PURE__ */ new Set();
+  function queueWebSpeechFallback(text) {
+    const capturedAt = Date.now();
+    const meetingSessionId = state.meetingSessionId;
+    const timer = setTimeout(() => {
+      pendingWebSpeechFallbacks.delete(timer);
+      if (state.status !== "active" || state.meetingSessionId !== meetingSessionId || !webSpeechGate.allowsWebSpeechFinal(Date.now())) return;
+      emitTranscriptSegment(text, "user", "web_speech", 0.9, {
+        startOffsetMs: capturedAt,
+        endOffsetMs: capturedAt,
+        eventTimeMs: capturedAt
+      });
+    }, WEB_SPEECH_FALLBACK_DELAY_MS);
+    pendingWebSpeechFallbacks.add(timer);
+  }
+  function clearPendingWebSpeechFallbacks() {
+    for (const timer of pendingWebSpeechFallbacks) clearTimeout(timer);
+    pendingWebSpeechFallbacks.clear();
+  }
   var EVOLVIO_UI_HOST_ID = "gleameet-ui-host";
   function getUiRoot() {
     let host = document.getElementById(EVOLVIO_UI_HOST_ID);
