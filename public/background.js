@@ -471,7 +471,7 @@ async function handlePauseCoaching() {
       meetingSessionId: state.meetingSessionId
     }).catch(() => {
     });
-    broadcastStatus();
+    broadcastStatus("coaching-paused-by-user");
     console.log("[Evolvio] Coaching paused, session preserved:", state.meetingSessionId);
     return { status: "ready" };
   } catch (err) {

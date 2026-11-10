@@ -337,6 +337,17 @@
     }
   };
 
+  // src/utils/coaching-session-state.ts
+  function isAuthoritativeStatusReason(reason) {
+    return reason === "coaching-paused-by-user" || reason === "meeting-ended" || reason === "coaching-ended-by-user" || reason === "tracked-tab-removed" || reason === "tracked-tab-left-meeting-url";
+  }
+  function shouldIgnoreStaleStatusUpdate(input) {
+    if (isAuthoritativeStatusReason(input.statusReason)) return false;
+    const downgradesStatus = input.incomingStatus === "off" || input.incomingStatus === "ready" || input.incomingStatus === "error";
+    const clearsSession = input.incomingMeetingSessionId === null;
+    return (downgradesStatus || clearsSession) && input.currentSessionLive && input.meetingStillPresent;
+  }
+
   // src/content/content-script.ts
   var import_capture_integrity = __toESM(require_capture_integrity());
   var DEFAULT_CAPTURE_MODE = "user_voice_only";
@@ -500,19 +511,14 @@
   function shouldRediscoverMeetingFromUrl() {
     return isLikelyMeetingUrl() && getPlatform() === "zoom";
   }
-  function isExplicitTeardownReason(reason) {
-    return reason === "meeting-ended" || reason === "coaching-ended-by-user" || reason === "tracked-tab-removed" || reason === "tracked-tab-left-meeting-url";
-  }
   function shouldIgnoreStaleStatusDowngrade(message) {
-    const statusReason = message.statusReason;
-    if (isExplicitTeardownReason(statusReason)) return false;
-    const incomingStatus = message.status;
-    const clearsSession = message.meetingSessionId === null;
-    const downgradesStatus = incomingStatus === "off" || incomingStatus === "ready" || incomingStatus === "error";
-    if (!downgradesStatus && !clearsSession) return false;
-    const hasLiveSession = !!state.meetingSessionId || !!state.signalCaptureSessionId;
-    const stillLooksInMeeting = detectMeeting() || shouldTrustLikelyMeetingUrl() || shouldRediscoverMeetingFromUrl();
-    return hasLiveSession && stillLooksInMeeting;
+    return shouldIgnoreStaleStatusUpdate({
+      currentSessionLive: !!state.meetingSessionId || !!state.signalCaptureSessionId,
+      meetingStillPresent: detectMeeting() || shouldTrustLikelyMeetingUrl() || shouldRediscoverMeetingFromUrl(),
+      incomingStatus: message.status,
+      incomingMeetingSessionId: message.meetingSessionId,
+      statusReason: message.statusReason
+    });
   }
   function hasVisibleMeetingEndSignal() {
     const platform = getPlatform();
@@ -1533,18 +1539,18 @@
           sendCoachingActiveHeartbeat();
           break;
         }
-        const explicitTeardown = isExplicitTeardownReason(message.statusReason);
+        const authoritativeStatusChange = isAuthoritativeStatusReason(message.statusReason);
         const incomingMuted = message.status === "muted" && message.promptsMutedByUser === true;
         state.status = incomingMuted ? "muted" : message.status === "muted" ? "active" : message.status;
         state.promptsMutedByUser = incomingMuted;
         state.meetingDetected = message.meetingDetected ?? state.meetingDetected;
-        if (message.meetingSessionId || explicitTeardown) {
+        if (message.meetingSessionId || authoritativeStatusChange) {
           state.meetingSessionId = message.meetingSessionId ?? null;
         }
         state.platform = message.platform ?? state.platform ?? getPlatform();
         state.captureMode = resolveCaptureMode(message.captureMode, state.captureMode);
         updateStatusIndicator();
-        if ((previousStatus === "active" || previousStatus === "muted") && (state.status === "ready" || state.status === "off" || state.status === "error") && explicitTeardown) {
+        if ((previousStatus === "active" || previousStatus === "muted") && (state.status === "ready" || state.status === "off" || state.status === "error") && authoritativeStatusChange) {
           stopSignalCapture();
         }
         break;
